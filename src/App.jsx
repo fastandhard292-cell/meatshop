@@ -23,10 +23,8 @@ import {
 // ==========================================
 // ⚠️ КОНФІГУРАЦІЯ ГЛОБАЛЬНОЇ БАЗИ ДАНИХ (ДЛЯ КЛІЄНТІВ)
 // ==========================================
-// 1. Опублікуйте файл "meat_store_db.json" на вашому Google Drive
-//    (Права кнопка миші -> Поділитися -> Усі, хто мають посилання, можуть переглядати)
-// 2. Скопіюйте ID файлу з посилання та вставте його сюди нижче:
-const PUBLIC_FILE_ID = "1eOdZ0_TsQAS_LrAfVcEatNgST_5VNsm5"; // <--- ВИПРАВЛЕНО: тепер тут цифра 0 (нуль) замість літери O!
+// Скопійовано ваш реальний хмарний ID файлу з зображення image_4d5d80.png:
+const PUBLIC_FILE_ID = "1hFqJw14-7LUDBXcIzqzJIvC-03yzhCCT"; 
 
 // Скопійований публічний API-ключ для швидкого зчитування без авторизації:
 const PUBLIC_API_KEY = "AIzaSyCczGkh9GrG0phiQP6e_yi44IiZVyEEANo";
@@ -136,9 +134,9 @@ export default function App() {
       bannerDesc: 'Замовляйте свіжі делікатеси, натуральні ковбаси та соковите мариноване м\'ясо до вашого столу. Усі замовлення збираються вручну та з любов\'ю.',
       advantage1: 'ЕКОЛОГІЧНО ЧИСТА СИРОВИНА',
       advantage2: 'ВЛАСНЕ КОПТИЛЬНЕ ВИРОБНИЦТВО НА ДРОВАХ',
-      contactPhone: '+380984536052',
-      contactTelegram: '+380984536052',
-      contactWhatsapp: '+380984536052' 
+      contactPhone: '+380671234567',
+      contactTelegram: 'vash_username',
+      contactWhatsapp: '380671234567' 
     };
 
     try {
@@ -236,13 +234,11 @@ export default function App() {
     let fileIsPrivate = false;
 
     // --- КРОК 1. Пряма спроба завантаження без проксі через офіційний Google Drive API ---
-    // Google API підтримує CORS і є найнадійнішим, якщо API-ключ налаштований правильно!
     if (PUBLIC_API_KEY && PUBLIC_API_KEY.trim() !== "") {
       const apiKeyUrl = `https://www.googleapis.com/drive/v3/files/${cleanId}?alt=media&key=${PUBLIC_API_KEY.trim()}`;
       try {
         tempLogs.push(`[Прямий Google API] Спроба запиту...`);
         const controller = new AbortController();
-        // Встановлюємо комфортний тайм-аут у 15 секунд для повільного мобільного зв'язку
         const timeoutId = setTimeout(() => controller.abort(), 15000);
 
         const response = await fetch(apiKeyUrl, { signal: controller.signal });
@@ -299,7 +295,7 @@ export default function App() {
             tempLogs.push(`[${proxy.name}] Спроба резервного запиту...`);
             
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 секунд
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
 
             const response = await fetch(targetUrl, { signal: controller.signal });
             clearTimeout(timeoutId);
@@ -456,9 +452,10 @@ export default function App() {
     }
   };
 
-  const syncWithGoogleDrive = async (passedToken = null, passedConfig = null) => {
+  const syncWithGoogleDrive = async (passedToken = null, passedConfig = null, customSettings = null) => {
     const token = passedToken || gdriveConfig.accessToken;
     const currentConfig = passedConfig || gdriveConfig;
+    const settingsToSync = customSettings || siteSettings;
 
     if (!token) {
       showToast('Спершу авторизуйтеся в Google Drive', 'error');
@@ -487,7 +484,7 @@ export default function App() {
       const dbPayload = {
         products: products,
         orders: orders,
-        siteSettings: siteSettings,
+        siteSettings: settingsToSync,
         lastUpdated: new Date().toISOString()
       };
 
@@ -574,6 +571,21 @@ export default function App() {
       ...prev,
       [key]: newValue
     }));
+  };
+
+  // --- МЕТОД ОДНОЧАСНОГО ЗБЕРЕЖЕННЯ ТА СИНХРОНІЗАЦІЇ КОНТАКТІВ ---
+  const handleSaveContacts = () => {
+    // Створюємо миттєву копію найновіших налаштувань для синхронізації, уникаючи лагу стейту React
+    const updatedSettings = { ...siteSettings };
+    localStorage.setItem('meat_store_settings', JSON.stringify(updatedSettings));
+    
+    showToast("Контакти успішно збережено локально! Записуємо зміни на Google Диск...", "success");
+    
+    if (gdriveConfig.isConnected) {
+      syncWithGoogleDrive(null, null, updatedSettings);
+    } else {
+      showToast("Контакти збережено локально. Увійдіть у Google Drive для запису в хмару!", "info");
+    }
   };
 
   const handleSaveProduct = (e) => {
@@ -1596,7 +1608,7 @@ export default function App() {
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => handleEditProduct(p)}
-                            className="p-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-350 hover:text-white"
+                            className="p-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-355 hover:text-white"
                           >
                             <Edit3 className="w-4 h-4" />
                           </button>
@@ -1615,6 +1627,7 @@ export default function App() {
               </div>
             )}
 
+            {/* Суб-вкладка: ЗАМОВЛЕННЯ */}
             {adminSubTab === 'orders' && (
               <div className="space-y-6">
                 {orders.length === 0 ? (
@@ -1659,11 +1672,8 @@ export default function App() {
                         <div>
                           <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Доставка</span>
                           <p className="font-bold text-zinc-200">
-                            {order.customer.deliveryType === 'pickup' ? 'Самовивіз' : 'Адресна доставка'}
+                            {order.customer.deliveryType === 'pickup' ? 'Самовивіз' : 'Адресна доставка (' + order.customer.address + ')'}
                           </p>
-                          {order.customer.deliveryType === 'delivery' && (
-                            <p className="text-zinc-400 mt-1">{order.customer.address}</p>
-                          )}
                         </div>
                         <div>
                           <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Оплата</span>
@@ -1714,6 +1724,7 @@ export default function App() {
               </div>
             )}
 
+            {/* Суб-вкладка: НАЛАШТУВАННЯ ТА DRIVE */}
             {adminSubTab === 'gdrive' && (
               <div className="max-w-3xl mx-auto space-y-8">
                 
@@ -1758,10 +1769,7 @@ export default function App() {
                     </div>
 
                     <button
-                      onClick={() => {
-                        showToast("Контакти успішно збережено локально! Не забудьте натиснути кнопку 'Синхронізувати з хмарою'.", "success");
-                        if (gdriveConfig.isConnected) syncWithGoogleDrive();
-                      }}
+                      onClick={handleSaveContacts}
                       className="w-full mt-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold py-3 rounded-xl text-xs uppercase tracking-wider transition-all"
                     >
                       Зберегти контакти
@@ -1827,7 +1835,7 @@ export default function App() {
                       <div className="flex justify-between">
                         <span className="text-zinc-500">Статус зв'язку:</span>
                         <span className={`font-bold ${gdriveConfig.isConnected ? 'text-emerald-400' : 'text-amber-500'}`}>
-                          {gdriveConfig.isConnected ? 'ПІДКЛЮЧЕНО' : 'АВТОНОМНИЙ'}
+                          {gdriveConfig.isConnected ? 'ПІДКЛЮЧЕНО (Дійсний 1 год.)' : 'АВТОНОМНИЙ'}
                         </span>
                       </div>
                       {gdriveConfig.fileId && (
@@ -1866,7 +1874,7 @@ export default function App() {
               <span>Зателефонувати</span>
             </a>
             <a 
-              href={`https://t.me/${siteSettings.contactTelegram}`}
+              href={`https://t.me/${siteSettings.contactTelegram?.replace('@', '')}`}
               target="_blank" 
               rel="noopener noreferrer"
               className="flex items-center gap-2.5 p-2 hover:bg-zinc-800 rounded-lg text-zinc-100 transition-all border-b border-zinc-850 pb-2"
@@ -1875,7 +1883,7 @@ export default function App() {
               <span>Чат Telegram</span>
             </a>
             <a 
-              href={`https://wa.me/${siteSettings.contactWhatsapp}`}
+              href={`https://wa.me/${siteSettings.contactWhatsapp?.replace('+', '')}`}
               target="_blank" 
               rel="noopener noreferrer"
               className="flex items-center gap-2.5 p-2 hover:bg-zinc-800 rounded-lg text-zinc-100 transition-all"
@@ -1912,7 +1920,7 @@ export default function App() {
 
             <div className="space-y-3">
               <a
-                href={`https://t.me/${siteSettings.contactTelegram}?text=${encodeURIComponent(generateOrderMessage(lastPlacedOrder))}`}
+                href={`https://t.me/${siteSettings.contactTelegram?.replace('@', '')}?text=${encodeURIComponent(generateOrderMessage(lastPlacedOrder))}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-3.5 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2"
@@ -1921,7 +1929,7 @@ export default function App() {
                 Надіслати в Telegram ✈️
               </a>
               <a
-                href={`https://wa.me/${siteSettings.contactWhatsapp}?text=${encodeURIComponent(generateOrderMessage(lastPlacedOrder))}`}
+                href={`https://wa.me/${siteSettings.contactWhatsapp?.replace('+', '')}?text=${encodeURIComponent(generateOrderMessage(lastPlacedOrder))}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-3.5 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2"
