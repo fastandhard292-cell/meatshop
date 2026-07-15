@@ -85,7 +85,6 @@ const INITIAL_PRODUCTS = [
 ];
 
 export default function App() {
-  // --- СТАН БЕЗПЕКИ ТА ДОСТУПУ ---
   const [isAdmin, setIsAdmin] = useState(() => {
     return localStorage.getItem('meat_store_is_admin') === 'true';
   });
@@ -207,7 +206,6 @@ export default function App() {
     comment: ''
   });
 
-  // --- СИНХРОНІЗАЦІЯ З ЛОКАЛЬНИМ СХОВИЩЕМ ---
   useEffect(() => {
     localStorage.setItem('meat_store_products', JSON.stringify(products));
   }, [products]);
@@ -235,57 +233,50 @@ export default function App() {
     let loadedSuccessfully = false;
     let fileIsPrivate = false;
 
-    // --- КРОК 1. Спроба завантаження через унікальний API-ключ Google за допомогою CORS-проксі ---
+    // --- КРОК 1. Пряма спроба завантаження без проксі через офіційний Google Drive API ---
+    // Google API підтримує CORS і є найнадійнішим, якщо API-ключ налаштований правильно!
     if (PUBLIC_API_KEY && PUBLIC_API_KEY.trim() !== "") {
       const apiKeyUrl = `https://www.googleapis.com/drive/v3/files/${cleanId}?alt=media&key=${PUBLIC_API_KEY.trim()}`;
-      
-      const apiKeyProxies = [
-        { name: 'API через Corsproxy.io', fn: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}&_cb=${Date.now()}` },
-        { name: 'API через Codetabs Proxy', fn: (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}&_cb=${Date.now()}` },
-        { name: 'API через AllOrigins Raw', fn: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}&_cb=${Date.now()}` }
-      ];
+      try {
+        tempLogs.push(`[Прямий Google API] Спроба запиту...`);
+        const controller = new AbortController();
+        // Встановлюємо комфортний тайм-аут у 15 секунд для повільного мобільного зв'язку
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-      for (const proxy of apiKeyProxies) {
-        try {
-          const targetUrl = proxy.fn(apiKeyUrl);
-          tempLogs.push(`[${proxy.name}] Спроба запиту...`);
+        const response = await fetch(apiKeyUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          const text = await response.text();
+          const trimmed = text.trim();
           
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 4500);
-          
-          const response = await fetch(targetUrl, { signal: controller.signal });
-          clearTimeout(timeoutId);
-
-          if (response.ok) {
-            const text = await response.text();
-            const trimmed = text.trim();
-            
-            let data = null;
-            if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-              data = JSON.parse(trimmed);
-            }
-
-            if (data && data.products && data.products.length > 0) {
-              setProducts(data.products);
-              if (data.siteSettings) setSiteSettings(data.siteSettings);
-              if (data.orders) setOrders(data.orders);
-              
-              tempLogs.push(`[${proxy.name}] УСПІХ! Базу даних миттєво зчитано з Google API.`);
-              loadedSuccessfully = true;
-              setDbSource('gdrive');
-              setIsPrivateError(false);
-              break;
-            }
-          } else {
-            tempLogs.push(`[${proxy.name}] Помилка відповіді: ${response.status}`);
+          let data = null;
+          if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+            data = JSON.parse(trimmed);
           }
-        } catch (e) {
-          tempLogs.push(`[${proxy.name}] Помилка підключення: ${e.message}`);
+
+          if (data && data.products && data.products.length > 0) {
+            setProducts(data.products);
+            if (data.siteSettings) setSiteSettings(data.siteSettings);
+            if (data.orders) setOrders(data.orders);
+            
+            tempLogs.push(`[Прямий Google API] УСПІХ! Базу даних завантажено напряму з Google Cloud.`);
+            loadedSuccessfully = true;
+            setDbSource('gdrive');
+            setIsPrivateError(false);
+          }
+        } else {
+          tempLogs.push(`[Прямий Google API] Помилка відповіді: ${response.status}`);
+          if (response.status === 403 || response.status === 404) {
+            fileIsPrivate = true;
+          }
         }
+      } catch (e) {
+        tempLogs.push(`[Прямий Google API] Помилка підключення: ${e.message}`);
       }
     }
 
-    // --- КРОК 2. Резервний каскадний проксі (якщо API-ключ не вказано або виник збій) ---
+    // --- КРОК 2. Резервні каскадні запити через проксі (якщо прямий запит не вдався) ---
     if (!loadedSuccessfully) {
       const driveUrls = [
         `https://docs.google.com/uc?export=download&id=${cleanId}`,
@@ -294,10 +285,9 @@ export default function App() {
       ];
       
       const proxies = [
-        { name: 'Прямий безпроксі запит', fn: (url) => url },
-        { name: 'Corsproxy.io', fn: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}&_cb=${Date.now()}` },
         { name: 'Codetabs Proxy', fn: (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}&_cb=${Date.now()}` },
-        { name: 'AllOrigins Raw', fn: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}&_cb=${Date.now()}` }
+        { name: 'AllOrigins Raw', fn: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}&_cb=${Date.now()}` },
+        { name: 'Corsproxy.io', fn: (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}&_cb=${Date.now()}` }
       ];
 
       for (const proxy of proxies) {
@@ -307,7 +297,7 @@ export default function App() {
             tempLogs.push(`[${proxy.name}] Спроба резервного запиту...`);
             
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 4000);
+            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 секунд
 
             const response = await fetch(targetUrl, { signal: controller.signal });
             clearTimeout(timeoutId);
@@ -400,7 +390,6 @@ export default function App() {
     }
   }, [isAdmin]);
 
-  // Авторизація адміна на сайті
   const handleAdminLogin = (e) => {
     e.preventDefault();
     if (passwordInput === ADMIN_PASSWORD) {
@@ -432,7 +421,6 @@ export default function App() {
     showToast('Вихід з режиму адміністратора виконано.', 'info');
   };
 
-  // Логіка автентифікації в Google Drive API
   const handleGoogleLogin = () => {
     if (!gdriveConfig.clientId) {
       showToast('Вкажіть ваш Google Client ID в налаштуваннях!', 'error');
@@ -466,7 +454,6 @@ export default function App() {
     }
   };
 
-  // Логіка оновлення бази даних у Google Drive
   const syncWithGoogleDrive = async (passedToken = null, passedConfig = null) => {
     const token = passedToken || gdriveConfig.accessToken;
     const currentConfig = passedConfig || gdriveConfig;
@@ -580,7 +567,6 @@ export default function App() {
     showToast('Локальний зв\'язок з Google Drive розірвано.', 'info');
   };
 
-  // Редагування текстів прямо на екрані (Інлайн редагування)
   const handleTextChange = (key, newValue) => {
     setSiteSettings(prev => ({
       ...prev,
@@ -588,7 +574,6 @@ export default function App() {
     }));
   };
 
-  // Збереження товарів з панелі керування
   const handleSaveProduct = (e) => {
     e.preventDefault();
     if (!productForm.name || !productForm.price) {
@@ -665,7 +650,6 @@ export default function App() {
     }
   };
 
-  // Робота з кошиком покупця
   const addToCart = (product, quantity = null) => {
     const qty = quantity || product.minWeight || 1;
     const existing = cart.find(item => item.id === product.id);
@@ -702,7 +686,6 @@ export default function App() {
     return cart.reduce((total, item) => total + (item.price * item.quantity), 0);
   };
 
-  // Надсилання нового замовлення
   const handlePlaceOrder = (e) => {
     e.preventDefault();
     if (cart.length === 0) {
@@ -726,12 +709,9 @@ export default function App() {
     const updatedOrders = [newOrder, ...orders];
     setOrders(updatedOrders);
     
-    // Створюємо стан успішного замовлення для показу модалки з кнопками месенджерів
     setLastPlacedOrder(newOrder);
-    
     setCart([]);
     showToast(`Замовлення ${newOrder.id} успішно створено!`, 'success');
-    
     setActiveTab('shop');
     
     setCheckoutForm({
@@ -827,7 +807,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ⚠️ ВЕРХНЯ ХМАРНА ПАНЕЛЬ АДМІНА */}
+      {/* ⚠️ ВЕРХНЯ ПАНЕЛЬ АДМІНА */}
       {isAdmin && (
         <div className="bg-zinc-900 border-b border-zinc-800 py-2.5 px-4 text-xs font-mono">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-3">
@@ -842,7 +822,6 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-4">
-              {/* Перемикач режиму редактора */}
               <button 
                 onClick={() => setIsEditorMode(!isEditorMode)}
                 className={`px-3 py-1 rounded-md font-bold transition-all flex items-center gap-1.5 ${
@@ -855,7 +834,6 @@ export default function App() {
                 Режим редактора {isEditorMode ? 'УВІМКНЕНО' : 'ВИМКНЕНО'}
               </button>
 
-              {/* Кнопка швидкої синхронізації */}
               {gdriveConfig.isConnected && (
                 <button
                   onClick={() => syncWithGoogleDrive()}
@@ -930,7 +908,7 @@ export default function App() {
                   <span className={`w-1.5 h-1.5 rounded-full ${dbSource === 'gdrive' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
                   <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-black flex items-center gap-1">
                     База: {dbSource === 'gdrive' ? 'Хмара' : 'Локальна'} 
-                    <RotateCw className="w-2 h-2 text-zinc-600 inline" />
+                    <RotateCw className="w-2 h-2 text-zinc-650 inline" />
                   </span>
                 </div>
               </div>
@@ -955,7 +933,6 @@ export default function App() {
                   </span>
                 )}
               </button>
-              {/* Посилання на адмінку видно ТІЛЬКИ авторизованому адміну */}
               {isAdmin && (
                 <button 
                   onClick={() => { setActiveTab('admin'); setAdminSubTab('products'); }}
@@ -966,7 +943,6 @@ export default function App() {
               )}
             </nav>
 
-            {/* Мобільна кнопка кошика */}
             <div className="flex items-center gap-3">
               <button 
                 onClick={() => setActiveTab('cart')}
@@ -985,7 +961,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* Мобільне меню навігації на екрані */}
+      {/* Мобільне меню */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-zinc-950/95 backdrop-blur-md border-t border-zinc-900 px-4 py-3 flex justify-around items-center shadow-2xl">
         <button 
           onClick={() => setActiveTab('shop')}
@@ -1017,10 +993,9 @@ export default function App() {
         )}
       </div>
 
-      {/* ГОЛОВНИЙ ВЕБ-КОНТЕНТ */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
         
-        {/* ВКЛАДКА 1: ВІТРИНА МАГАЗИНУ */}
+        {/* ВКЛАДКА 1: ВІТРИНА */}
         {activeTab === 'shop' && (
           <div>
             {/* РЕКЛАМНИЙ БАНЕР */}
@@ -1065,7 +1040,6 @@ export default function App() {
                   </p>
                 )}
 
-                {/* Блок переваг бренду */}
                 <div className="flex flex-wrap gap-4 text-[10px] font-bold tracking-wider uppercase text-zinc-300">
                   <div className="flex items-center gap-1.5 bg-zinc-900/80 px-4 py-2.5 rounded-xl border border-zinc-800">
                     <span className="text-amber-500 font-bold">✓</span>
@@ -1098,10 +1072,8 @@ export default function App() {
               </div>
             </div>
 
-            {/* РЯДОК ПОШУКУ ТА КАТЕГОРІЙ */}
+            {/* РЯДОК ПОШУКУ */}
             <div className="flex flex-col lg:flex-row gap-4 justify-between items-stretch lg:items-center mb-8">
-              
-              {/* Рядок пошуку */}
               <div className="relative flex-1 max-w-lg">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                   <Search className="w-5 h-5 text-zinc-500" />
@@ -1115,8 +1087,7 @@ export default function App() {
                 />
               </div>
 
-              {/* Перемикання категорій */}
-              <div className="flex items-center gap-2 overflow-x-auto pb-2 lg:pb-0 scrollbar-none font-sans text-xs">
+              <div className="flex items-center gap-2 overflow-x-auto pb-2 lg:pb-0 scrollbar-none">
                 {[
                   { id: 'all', name: 'Усе меню' },
                   { id: 'sausages', name: 'Ковбаси & Сосиски' },
@@ -1139,7 +1110,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* СПИСОК ТОВАРІВ НА ВІТРИНІ */}
+            {/* СПИСОК ТОВАРІВ */}
             {filteredProducts.length === 0 ? (
               <div className="text-center py-16 bg-zinc-900/30 rounded-3xl border border-dashed border-zinc-900">
                 <p className="text-zinc-500 text-lg mb-2">Нічого не знайдено за вашим запитом</p>
@@ -1152,7 +1123,6 @@ export default function App() {
                     key={product.id}
                     className="group bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-900 hover:border-zinc-800 transition-all flex flex-col hover:scale-[1.01] shadow-xl hover:shadow-2xl"
                   >
-                    {/* Картинка */}
                     <div className="relative h-56 overflow-hidden bg-zinc-950">
                       <img 
                         src={product.image} 
@@ -1181,7 +1151,6 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Опис товару */}
                     <div className="p-6 flex-1 flex flex-col justify-between">
                       <div>
                         <h3 className="text-lg font-bold text-zinc-100 group-hover:text-amber-500 transition-colors font-serif">
@@ -1218,7 +1187,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ВКЛАДКА 2: КОШИК ТА ОФОРМЛЕННЯ ЗАМОВЛЕННЯ */}
+        {/* ВКЛАДКА 2: КОШИК */}
         {activeTab === 'cart' && (
           <div className="max-w-4xl mx-auto">
             <h2 className="text-3xl font-bold font-serif mb-8 text-white">Ваш Кошик</h2>
@@ -1237,7 +1206,6 @@ export default function App() {
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                 
-                {/* Список товарів у кошику */}
                 <div className="lg:col-span-7 space-y-4">
                   {cart.map(item => (
                     <div 
@@ -1300,7 +1268,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* --- ФОРМА ОФОРМЛЕННЯ ЗАМОВЛЕННЯ --- */}
+                {/* ФОРМА */}
                 <div className="lg:col-span-5 bg-zinc-900 rounded-3xl p-6 border border-zinc-850">
                   <h3 className="text-xl font-bold font-serif text-white mb-6">Оформлення замовлення</h3>
                   
@@ -1424,7 +1392,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ВКЛАДКА 3: КЕРУВАННЯ (Доступна лише адміну) */}
+        {/* ВКЛАДКА 3: АДМІНКА */}
         {activeTab === 'admin' && isAdmin && (
           <div>
             <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center mb-8 border-b border-zinc-900 pb-6">
@@ -1465,11 +1433,9 @@ export default function App() {
               </div>
             </div>
 
-            {/* Суб-вкладка: ТОВАРИ */}
             {adminSubTab === 'products' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                 
-                {/* @Форма */}
                 <div className="lg:col-span-5 bg-zinc-900 p-6 rounded-3xl border border-zinc-850 self-start">
                   <h3 className="text-lg font-bold font-serif mb-6 text-white flex items-center gap-2">
                     {editingProduct ? <Edit3 className="w-5 h-5 text-amber-500" /> : <Plus className="w-5 h-5 text-amber-500" />}
@@ -1610,7 +1576,6 @@ export default function App() {
                   </form>
                 </div>
 
-                {/* Таблиця товарів */}
                 <div className="lg:col-span-7 bg-zinc-900 rounded-3xl border border-zinc-850 overflow-hidden">
                   <div className="p-6 border-b border-zinc-850">
                     <h3 className="font-bold text-lg font-serif">Товари на складі</h3>
@@ -1648,7 +1613,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Суб-вкладка: ЗАМОВЛЕННЯ */}
             {adminSubTab === 'orders' && (
               <div className="space-y-6">
                 {orders.length === 0 ? (
@@ -1684,7 +1648,6 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Дані клієнта */}
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs mb-6 bg-zinc-950 p-4 rounded-2xl border border-zinc-900">
                         <div>
                           <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Отримувач</span>
@@ -1703,12 +1666,11 @@ export default function App() {
                         <div>
                           <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Оплата</span>
                           <p className="font-bold text-zinc-200">
-                            {order.customer.paymentType === 'cash' ? 'Готівка' : 'Карта при отриманні'}
+                            {order.customer.paymentType === 'cash' ? 'Готівка' : 'Термінал'}
                           </p>
                         </div>
                       </div>
 
-                      {/* Перелік товарів */}
                       <div className="space-y-2 mb-6">
                         <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-2">Деталі кошика</span>
                         {order.items.map((item, idx) => (
@@ -1727,7 +1689,6 @@ export default function App() {
                         </div>
                       )}
 
-                      {/* Екшн-кнопки */}
                       {order.status === 'new' && (
                         <div className="flex gap-2">
                           <button
@@ -1751,11 +1712,9 @@ export default function App() {
               </div>
             )}
 
-            {/* Суб-вкладка: НАЛАШТУВАННЯ САЙТУ ТА GOOGLE DRIVE */}
             {adminSubTab === 'gdrive' && (
               <div className="max-w-3xl mx-auto space-y-8">
                 
-                {/* КОНТАКТИ ТА ТЕКСТИ */}
                 <div className="bg-zinc-900 rounded-3xl p-8 border border-zinc-850 shadow-xl">
                   <h3 className="text-xl font-bold font-serif text-white mb-6 flex items-center gap-2">
                     <Phone className="w-5 h-5 text-amber-500" />
@@ -1808,7 +1767,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* НАЛАШТУВАННЯ GOOGLE DRIVE */}
                 <div className="bg-zinc-900 rounded-3xl p-8 border border-zinc-850 shadow-xl">
                   <div className="flex items-center gap-4 mb-6">
                     <div className="p-3 bg-amber-500/10 rounded-2xl border border-amber-500/20 text-amber-500">
@@ -1894,7 +1852,7 @@ export default function App() {
 
       </main>
 
-      {/* 🟢 ПЛАВАЮЧА КНОПКА ЗВ’ЯЗКУ */}
+      {/* ПЛАВАЮЧА КНОПКА ЗВ’ЯЗКУ */}
       <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3 font-sans select-none">
         {showContactMenu && (
           <div className="flex flex-col gap-2 bg-zinc-900 border border-zinc-850 p-3 rounded-2xl shadow-2xl animate-fade-in text-xs font-bold w-48">
@@ -1934,7 +1892,7 @@ export default function App() {
         </button>
       </div>
 
-      {/* 🔴 МОДАЛКА УСПІШНОГО ЗАМОВЛЕННЯ ДЛЯ КЛІЄНТУ */}
+      {/* МОДАЛКА ЗАМОВЛЕННЯ */}
       {lastPlacedOrder && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
           <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl w-full max-w-lg shadow-2xl relative">
@@ -1944,7 +1902,6 @@ export default function App() {
               Для миттєвого підтвердження ви можете надіслати копію замовлення у наш чат Telegram чи WhatsApp!
             </p>
 
-            {/* Показ деталей чека */}
             <div className="bg-zinc-950 p-4 rounded-xl text-xs text-zinc-400 max-h-48 overflow-y-auto mb-6 border border-zinc-850">
               <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed">
                 {generateOrderMessage(lastPlacedOrder)}
@@ -1983,7 +1940,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ⚙️ ДІАГНОСТИЧНЕ МОДАЛЬНЕ ВІКНО БАЗИ ДАНИХ (Diagnostics Dashboard) */}
+      {/* ДІАГНОСТИЧНЕ ВІКНО */}
       {showDbDiagnostics && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
           <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl w-full max-w-2xl shadow-2xl relative">
@@ -2013,11 +1970,13 @@ export default function App() {
                 <AlertTriangle className="w-5 h-5 text-red-500 float-left mr-3 mb-2 shrink-0" />
                 <h4 className="font-bold mb-1 text-red-400">🚨 КРИТИЧНО: ФАЙЛ Є ПРИВАТНИМ!</h4>
                 <p className="leading-relaxed">
-                  Google Drive повернув сторінку авторизації замість самої бази. Через це сторонні користувачі не мають доступу до файлу і бачать базову демонстраційну компіляцію.
+                  Google Drive повернув сторінку авторизації замість файлу бази. Через це сторонні користувачі бачать першу базову компіляцію.
                   <br />
                   <span className="font-bold block mt-2 text-white">Як миттєво виправити:</span>
                   1. Відкрийте ваш Google Диск.<br />
-                  2. ...
+                  2. Клацніть правою кнопкою на `meat_store_db.json` -> Поділитися -> Поділитися.<br />
+                  3. Змініть "Обмежений доступ" на "Усі, хто мають посилання" (роль: Переглядач).<br />
+                  4. Натисніть "Готово".
                 </p>
               </div>
             )}
@@ -2045,12 +2004,10 @@ export default function App() {
         </div>
       )}
 
-      {/* НИЖНЯ ПАНЕЛЬ (ПІДВАЛ) ЗІ ПРИХОВАНИМ ВХОДОМ В АДМІНКУ */}
       <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-16 pt-8 border-t border-zinc-900 text-center text-[10px] text-zinc-650 font-sans">
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
           <p>© 2026 {siteSettings.title}. Традиційні крафтові вироби за найвищими стандартами якості.</p>
           
-          {/* Секретна іконка входу для адміна */}
           <div className="flex items-center gap-2">
             {!isAdmin ? (
               <button 
@@ -2070,7 +2027,6 @@ export default function App() {
         </div>
       </footer>
 
-      {/* МОДАЛЬНЕ ВІКНО ВХОДУ ДЛЯ АДМІНІСТРАТОРА */}
       {showLoginModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-zinc-900 border border-zinc-850 p-6 rounded-2xl w-full max-w-sm shadow-2xl">
