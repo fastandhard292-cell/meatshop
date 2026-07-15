@@ -28,7 +28,7 @@ import {
 // ⚠️ КОНФІГУРАЦІЯ ГЛОБАЛЬНОЇ БАЗИ ДАНИХ (ДЛЯ КЛІЄНТІВ)
 // ==========================================
 // 100% правильний ID вашого файлу з великою літерою "O"
-const PUBLIC_FILE_ID = "1eOdZ0_TsQAS_LrAfVcEatNgST_5VNsm5"; 
+const PUBLIC_FILE_ID = "1oeYMXv0TPKbdSk2OaplwfwUarb5fstTc"; 
 
 // Публічний API-ключ для безпроблемного зчитування даних без авторизації
 const PUBLIC_API_KEY = "AIzaSyCczGkh9GrG0phiQP6e_yi44IiZVyEEANo";
