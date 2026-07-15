@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShoppingBag, 
   Settings, 
@@ -15,24 +15,25 @@ import {
   Unlock,
   RotateCw,
   AlertTriangle,
-  Phone,
+  Send,
   MessageSquare,
-  Send
+  Phone,
+  HelpCircle
 } from 'lucide-react';
 
 // ==========================================
 // ⚠️ КОНФІГУРАЦІЯ ГЛОБАЛЬНОЇ БАЗИ ДАНИХ (ДЛЯ КЛІЄНТІВ)
 // ==========================================
-// Скопійовано ваш реальний хмарний ID файлу з зображення image_4d5d80.png:
+// Публічний ID файлу бази даних (оновлений та виправлений на ваш актуальний ID)
 const PUBLIC_FILE_ID = "1hFqJw14-7LUDBXcIzqzJIvC-03yzhCCT"; 
 
-// Скопійований публічний API-ключ для швидкого зчитування без авторизації:
+// Публічний API-ключ для безпроблемного зчитування даних без авторизації
 const PUBLIC_API_KEY = "AIzaSyCczGkh9GrG0phiQP6e_yi44IiZVyEEANo";
 
-// Секретний пароль для доступу до адмінки на вашому сайті
+// Секретний пароль для входу в режим адміністратора
 const ADMIN_PASSWORD = "1234"; 
 
-// Початкові демонстраційні дані товарів (використовуються як резервна копія)
+// Початкові демонстраційні дані товарів (використовуються як резервна копія при першому старті)
 const INITIAL_PRODUCTS = [
   {
     id: 'p1',
@@ -93,10 +94,10 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState('');
   const [loginError, setLoginError] = useState(false);
 
-  // --- СТАН ОФОРМЛЕНОГО ЗАМОВЛЕННЯ ДЛЯ ПОКАЗУ КЛІЄНТУ ---
+  // Стан оформленого замовлення для показу клієнту
   const [lastPlacedOrder, setLastPlacedOrder] = useState(null);
 
-  // --- СТАН ДАНИХ МАГАЗИНУ (з автоматичною перевіркою валідності збережених даних) ---
+  // Стан даних магазину (з автоматичною перевіркою валідності збережених даних)
   const [products, setProducts] = useState(() => {
     try {
       const saved = localStorage.getItem('meat_store_products');
@@ -134,9 +135,9 @@ export default function App() {
       bannerDesc: 'Замовляйте свіжі делікатеси, натуральні ковбаси та соковите мариноване м\'ясо до вашого столу. Усі замовлення збираються вручну та з любов\'ю.',
       advantage1: 'ЕКОЛОГІЧНО ЧИСТА СИРОВИНА',
       advantage2: 'ВЛАСНЕ КОПТИЛЬНЕ ВИРОБНИЦТВО НА ДРОВАХ',
-      contactPhone: '+380671234567',
+      contactPhone: '+380984536052',
       contactTelegram: 'vash_username',
-      contactWhatsapp: '380671234567' 
+      contactWhatsapp: '380984536052' 
     };
 
     try {
@@ -206,6 +207,7 @@ export default function App() {
     comment: ''
   });
 
+  // --- СИНХРОНІЗАЦІЯ З ЛОКАЛЬНИМ СХОВИЩЕМ ---
   useEffect(() => {
     localStorage.setItem('meat_store_products', JSON.stringify(products));
   }, [products]);
@@ -363,9 +365,15 @@ export default function App() {
       setDbSource('local');
       if (fileIsPrivate) {
         setIsPrivateError(true);
-        showToast("Файл приватний! Будь ласка, відкрийте публічний доступ на Google Диску.", "error");
+        // Показуємо повідомлення про закритий доступ тільки Адміністратору!
+        if (isAdmin) {
+          showToast("Файл приватний! Будь ласка, відкрийте публічний доступ на Google Диску.", "error");
+        }
       } else {
-        showToast("Працюємо на резервній локальній копії (Google Drive недоступний).", "info");
+        // Покупцям показуємо тихе інформаційне сповіщення тільки у випадку явного адмінського входу
+        if (isAdmin) {
+          showToast("Працюємо на резервній локальній копії (Google Drive недоступний).", "info");
+        }
       }
     }
   };
@@ -573,9 +581,7 @@ export default function App() {
     }));
   };
 
-  // --- МЕТОД ОДНОЧАСНОГО ЗБЕРЕЖЕННЯ ТА СИНХРОНІЗАЦІЇ КОНТАКТІВ ---
   const handleSaveContacts = () => {
-    // Створюємо миттєву копію найновіших налаштувань для синхронізації, уникаючи лагу стейту React
     const updatedSettings = { ...siteSettings };
     localStorage.setItem('meat_store_settings', JSON.stringify(updatedSettings));
     
@@ -806,9 +812,30 @@ export default function App() {
            `💰 *Загальна сума до сплати:* *${order.total.toFixed(2)} грн*`;
   };
 
+  const getCategoryName = (catId) => {
+    const catMap = {
+      sausages: 'Ковбаси',
+      delicacies: 'Делікатес',
+      fresh_meat: 'Свіже м’ясо',
+      semi_finished: 'Напівфабрикат'
+    };
+    return catMap[catId] || '';
+  };
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans antialiased pb-20 selection:bg-red-800 selection:text-white">
       
+      {/* Глобальне приховування смуг прокручування для уникнення зсувів макету */}
+      <style>{`
+        .scrollbar-none::-webkit-scrollbar {
+          display: none;
+        }
+        .scrollbar-none {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+        }
+      `}</style>
+
       {/* Тост-сповіщення */}
       {toast && (
         <div className={`fixed top-4 right-4 z-50 p-4 rounded-xl shadow-2xl transition-all duration-300 transform translate-y-0 flex items-center gap-3 border ${
@@ -870,7 +897,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ШАПКА МАГАЗИНУ */}
+      {/* */}
       <header className="sticky top-0 z-40 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-900 shadow-lg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-20">
@@ -913,16 +940,16 @@ export default function App() {
                   <p className="text-xs text-amber-500/90 font-medium tracking-wide">{siteSettings.subtitle}</p>
                 )}
 
-                {/* Інтерактивний індикатор підключення бази */}
+                {/* База Статус (Натискання відкриває вікно детальної діагностики) */}
                 <div 
-                  className="flex items-center gap-1.5 mt-1 cursor-pointer hover:opacity-80 transition-all select-none" 
+                  className="flex items-center gap-1.5 mt-1 cursor-pointer select-none group" 
                   onClick={() => setShowDbDiagnostics(true)}
-                  title="Клацніть для перевірки з'єднання"
+                  title="Клацніть для перевірки з'єднання з базою"
                 >
                   <span className={`w-1.5 h-1.5 rounded-full ${dbSource === 'gdrive' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
-                  <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-black flex items-center gap-1">
+                  <span className="text-[9px] text-zinc-500 group-hover:text-zinc-300 transition-colors uppercase tracking-widest font-black flex items-center gap-1">
                     База: {dbSource === 'gdrive' ? 'Хмара' : 'Локальна'} 
-                    <RotateCw className="w-2 h-2 text-zinc-650 inline" />
+                    <RotateCw className="w-2 h-2 text-zinc-650 group-hover:text-zinc-400 inline" />
                   </span>
                 </div>
               </div>
@@ -1012,7 +1039,7 @@ export default function App() {
         {/* ВКЛАДКА 1: ВІТРИНА */}
         {activeTab === 'shop' && (
           <div>
-            {/* РЕКЛАМНИЙ БАНЕР */}
+            {/* */}
             <div className="relative rounded-3xl overflow-hidden mb-10 bg-gradient-to-r from-zinc-950 via-zinc-900 to-red-950 border border-zinc-900 p-8 sm:p-12 flex flex-col justify-center min-h-[280px] shadow-2xl">
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(185,28,28,0.12),transparent_40%)]" />
               <div className="relative z-10 max-w-2xl">
@@ -1086,7 +1113,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* РЯДОК ПОШУКУ */}
+            {/* */}
             <div className="flex flex-col lg:flex-row gap-4 justify-between items-stretch lg:items-center mb-8">
               <div className="relative flex-1 max-w-lg">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
@@ -1101,7 +1128,8 @@ export default function App() {
                 />
               </div>
 
-              <div className="flex items-center gap-2 overflow-x-auto pb-2 lg:pb-0 scrollbar-none">
+              {/* Рядок категорій із фіксованою висотою, щоб уникнути зсувів CLS та прихованим смугами прокрутки */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none h-[48px] max-w-full">
                 {[
                   { id: 'all', name: 'Усе меню' },
                   { id: 'sausages', name: 'Ковбаси & Сосиски' },
@@ -1124,7 +1152,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* СПИСОК ТОВАРІВ */}
+            {/* */}
             {filteredProducts.length === 0 ? (
               <div className="text-center py-16 bg-zinc-900/30 rounded-3xl border border-dashed border-zinc-900">
                 <p className="text-zinc-500 text-lg mb-2">Нічого не знайдено за вашим запитом</p>
@@ -1132,70 +1160,74 @@ export default function App() {
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
-                {filteredProducts.map(product => (
-                  <div 
-                    key={product.id}
-                    className="group bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-900 hover:border-zinc-800 transition-all flex flex-col hover:scale-[1.01] shadow-xl hover:shadow-2xl"
-                  >
-                    <div className="relative h-56 overflow-hidden bg-zinc-950">
-                      <img 
-                        src={product.image} 
-                        alt={product.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                        onError={(e) => {
-                          e.target.onerror = null;
-                          e.target.src = 'https://images.unsplash.com/photo-1602491453979-53a99888ecf1?auto=format&fit=crop&q=80&w=600';
-                        }}
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent opacity-60" />
-                      
-                      <span className="absolute top-4 left-4 text-[10px] font-bold uppercase tracking-wider bg-zinc-950/95 text-amber-500 px-3 py-1.5 rounded-xl border border-zinc-850">
-                        {product.category === 'sausages' && 'Ковбаси'}
-                        {product.category === 'delicacies' && 'Делікатес'}
-                        {product.category === 'fresh_meat' && 'Свіже м’ясо'}
-                        {product.category === 'semi_finished' && 'Напівфабрикат'}
-                      </span>
-
-                      {!product.available && (
-                        <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm flex items-center justify-center">
-                          <span className="bg-red-950 text-red-400 border border-red-800 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest">
-                            Тимчасово немає
+                {filteredProducts.map(product => {
+                  const badgeText = getCategoryName(product.category);
+                  return (
+                    <div 
+                      key={product.id}
+                      className="group bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-900 hover:border-zinc-800 transition-all flex flex-col hover:scale-[1.01] shadow-xl hover:shadow-2xl"
+                    >
+                      {/* */}
+                      <div className="relative h-56 overflow-hidden bg-zinc-950">
+                        <img 
+                          src={product.image} 
+                          alt={product.name}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.src = 'https://images.unsplash.com/photo-1602491453979-53a99888ecf1?auto=format&fit=crop&q=80&w=600';
+                          }}
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent opacity-60" />
+                        
+                        {/* Динамічна плашка категорії: рендериться лише якщо є відповідний текст для уникнення зсувів і порожніх плашок */}
+                        {badgeText && (
+                          <span className="absolute top-4 left-4 text-[10px] font-bold uppercase tracking-wider bg-zinc-950/95 text-amber-500 px-3 py-1.5 rounded-xl border border-zinc-850/80 shadow-md backdrop-blur-sm">
+                            {badgeText}
                           </span>
-                        </div>
-                      )}
-                    </div>
+                        )}
 
-                    <div className="p-6 flex-1 flex flex-col justify-between">
-                      <div>
-                        <h3 className="text-lg font-bold text-zinc-100 group-hover:text-amber-500 transition-colors font-serif">
-                          {product.name}
-                        </h3>
-                        <p className="text-zinc-400 text-xs mt-2 line-clamp-3 leading-relaxed">
-                          {product.description || 'Неперевершений смак вишуканих м’ясних виробів для вашої родини.'}
-                        </p>
-                      </div>
-
-                      <div className="mt-6 pt-4 border-t border-zinc-850/80 flex items-center justify-between">
-                        <div>
-                          <div className="text-xs text-zinc-500">Ціна за 1 {product.unit}</div>
-                          <div className="text-2xl font-black text-white font-serif">
-                            {product.price} <span className="text-sm font-sans font-normal text-zinc-400">грн</span>
+                        {!product.available && (
+                          <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm flex items-center justify-center">
+                            <span className="bg-red-950 text-red-400 border border-red-800 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest">
+                              Тимчасово немає
+                            </span>
                           </div>
-                        </div>
-
-                        {product.available && (
-                          <button
-                            onClick={() => addToCart(product)}
-                            className="bg-gradient-to-r from-red-800 to-amber-700 hover:from-red-700 hover:to-amber-600 text-white font-bold text-xs px-4.5 py-3 rounded-xl transition-all shadow-md active:scale-95 flex items-center gap-2"
-                          >
-                            <ShoppingBag className="w-4 h-4" />
-                            В кошик
-                          </button>
                         )}
                       </div>
+
+                      <div className="p-6 flex-1 flex flex-col justify-between">
+                        <div>
+                          <h3 className="text-lg font-bold text-zinc-100 group-hover:text-amber-500 transition-colors font-serif">
+                            {product.name}
+                          </h3>
+                          <p className="text-zinc-400 text-xs mt-2 line-clamp-3 leading-relaxed">
+                            {product.description || 'Неперевершений смак вишуканих м’ясних виробів для вашої родини.'}
+                          </p>
+                        </div>
+
+                        <div className="mt-6 pt-4 border-t border-zinc-850/80 flex items-center justify-between">
+                          <div>
+                            <div className="text-xs text-zinc-500">Ціна за 1 {product.unit}</div>
+                            <div className="text-2xl font-black text-white font-serif">
+                              {product.price} <span className="text-sm font-sans font-normal text-zinc-400">грн</span>
+                            </div>
+                          </div>
+
+                          {product.available && (
+                            <button
+                              onClick={() => addToCart(product)}
+                              className="bg-gradient-to-r from-red-800 to-amber-700 hover:from-red-700 hover:to-amber-600 text-white font-bold text-xs px-4.5 py-3 rounded-xl transition-all shadow-md active:scale-95 flex items-center gap-2"
+                            >
+                              <ShoppingBag className="w-4 h-4" />
+                              В кошик
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1220,6 +1252,7 @@ export default function App() {
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                 
+                {/* */}
                 <div className="lg:col-span-7 space-y-4">
                   {cart.map(item => (
                     <div 
@@ -1282,7 +1315,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* ФОРМА */}
+                {/* */}
                 <div className="lg:col-span-5 bg-zinc-900 rounded-3xl p-6 border border-zinc-850">
                   <h3 className="text-xl font-bold font-serif text-white mb-6">Оформлення замовлення</h3>
                   
@@ -1447,6 +1480,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* */}
             {adminSubTab === 'products' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                 
@@ -1724,7 +1758,7 @@ export default function App() {
               </div>
             )}
 
-            {/* Суб-вкладка: НАЛАШТУВАННЯ ТА DRIVE */}
+            {/* */}
             {adminSubTab === 'gdrive' && (
               <div className="max-w-3xl mx-auto space-y-8">
                 
@@ -1788,6 +1822,35 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Порівняльна діагностика конфігурації хмари */}
+                  <div className="bg-zinc-950 p-5 rounded-2xl border border-zinc-850 mb-6 space-y-3 text-xs">
+                    <h4 className="font-bold text-zinc-300 uppercase tracking-widest text-[10px] flex items-center gap-1.5">
+                      <Info className="w-4 h-4 text-amber-500" />
+                      Порівняння конфігурацій баз даних (Для Адміна)
+                    </h4>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                      <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
+                        <span className="text-zinc-500 block mb-1">ID в коді (для клієнтів):</span>
+                        <code className="text-amber-500 font-mono select-all break-all block">{PUBLIC_FILE_ID}</code>
+                      </div>
+                      
+                      <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
+                        <span className="text-zinc-500 block mb-1">Ваш активний ID в хмарі:</span>
+                        <code className="text-emerald-500 font-mono select-all break-all block">
+                          {gdriveConfig.fileId || "Файл ще не створено"}
+                        </code>
+                      </div>
+                    </div>
+
+                    {gdriveConfig.fileId && gdriveConfig.fileId !== PUBLIC_FILE_ID && (
+                      <div className="p-3 bg-amber-950/40 border border-amber-800 rounded-xl text-amber-200 mt-2 leading-relaxed">
+                        ⚠️ <b>УВАГА:</b> ID у файлі `App.jsx` на GitHub не збігається з вашим файлом на Диску! 
+                        Ваші клієнти не побачать змін, поки ви не вставите ID <code>{gdriveConfig.fileId}</code> у рядок №25 в GitHub.
+                      </div>
+                    )}
+                  </div>
+
                   <div className="space-y-6">
                     <div className="space-y-4">
                       <div>
@@ -1799,6 +1862,37 @@ export default function App() {
                           className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-3 text-sm text-white focus:outline-none"
                           placeholder="Вставте ваш Client ID..."
                         />
+                      </div>
+
+                      {/* Ручна прив'язка ID хмари (запобігання дублікатам) */}
+                      <div>
+                        <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-1">
+                          Ручна прив'язка існуючого ID файлу
+                          <span className="text-zinc-500 font-normal normal-case">(якщо у вас вже є файл бази на Диску)</span>
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            id="manualFileIdInput"
+                            placeholder="Вставте ID файлу бази даних..."
+                            className="flex-1 bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-3 text-sm text-white focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const val = document.getElementById('manualFileIdInput').value.trim();
+                              if (val) {
+                                setGdriveConfig(prev => ({ ...prev, fileId: val }));
+                                showToast("Прив'язку існуючого файлу успішно виконано!", "success");
+                              } else {
+                                showToast("Введіть коректний ID файлу!", "error");
+                              }
+                            }}
+                            className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold px-4 rounded-xl text-xs transition-all border border-zinc-700"
+                          >
+                            Прив'язати
+                          </button>
+                        </div>
                       </div>
 
                       <div className="flex flex-col sm:flex-row gap-4 pt-2">
@@ -1950,7 +2044,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ДІАГНОСТИЧНЕ ВІКНО */}
+      {/* */}
       {showDbDiagnostics && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
           <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl w-full max-w-2xl shadow-2xl relative">
@@ -1959,7 +2053,7 @@ export default function App() {
               Діагностика хмарної бази даних
             </h3>
             <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
-              Ця панель аналізує, чому ваші покупці можуть не бачити внесених вами змін. Дані завантажуються безпосередньо з вашого Google Диску.
+              Ця панель аналізує підключення вашого магазину до хмари Google.
             </p>
 
             <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-850 font-mono text-[11px] leading-relaxed max-h-56 overflow-y-auto mb-6 text-zinc-300">
@@ -1974,6 +2068,25 @@ export default function App() {
                 ))
               )}
             </div>
+
+            {/* Автоматична делікатна підказка-помічник для виправлення OAuth Origin Mismatch */}
+            {isAdmin && (
+              <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 mb-6 text-xs text-zinc-300 space-y-2">
+                <h4 className="font-bold text-amber-500 uppercase tracking-widest text-[9px] flex items-center gap-1">
+                  <HelpCircle className="w-3.5 h-3.5" />
+                  Вирішення помилки "origin_mismatch" (Якщо не входить в акаунт):
+                </h4>
+                <p className="text-zinc-400 leading-relaxed">
+                  Google вимагає точного збігу доменів. Скопіюйте посилання нижче і додайте його в налаштування вашого <b>OAuth Client ID</b> в <b>Authorized JavaScript origins</b>:
+                </p>
+                <div className="bg-zinc-900 p-2.5 rounded-lg border border-zinc-800 flex justify-between items-center gap-3">
+                  <code className="text-emerald-400 font-mono text-[10px] break-all select-all block">
+                    {window.location.origin}
+                  </code>
+                  <span className="text-[9px] uppercase tracking-wider text-zinc-500 shrink-0 font-bold">Скопіюйте це</span>
+                </div>
+              </div>
+            )}
 
             {isPrivateError && (
               <div className="bg-red-950/40 border border-red-800 p-4 rounded-xl mb-6 text-xs text-red-200">
@@ -2018,6 +2131,7 @@ export default function App() {
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
           <p>© 2026 {siteSettings.title}. Традиційні крафтові вироби за найвищими стандартами якості.</p>
           
+          {/* */}
           <div className="flex items-center gap-2">
             {!isAdmin ? (
               <button 
