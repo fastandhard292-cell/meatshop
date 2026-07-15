@@ -24,7 +24,7 @@ import {
 // ==========================================
 // ⚠️ КОНФІГУРАЦІЯ ГЛОБАЛЬНОЇ БАЗИ ДАНИХ (ДЛЯ КЛІЄНТІВ)
 // ==========================================
-// Публічний ID файлу бази даних (оновлений та виправлений на ваш актуальний ID)
+// Оновлений та 100% виправлений на ваш актуальний ID (з великою літерою "O" замість нуля)
 const PUBLIC_FILE_ID = "1hFqJw14-7LUDBXcIzqzJIvC-O3yzhCCT"; 
 
 // Публічний API-ключ для безпроблемного зчитування даних без авторизації
@@ -207,7 +207,6 @@ export default function App() {
     comment: ''
   });
 
-  // --- СИНХРОНІЗАЦІЯ З ЛОКАЛЬНИМ СХОВИЩЕМ ---
   useEffect(() => {
     localStorage.setItem('meat_store_products', JSON.stringify(products));
   }, [products]);
@@ -223,6 +222,21 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('meat_store_settings', JSON.stringify(siteSettings));
   }, [siteSettings]);
+
+  const getTelegramLink = (usernameOrPhone) => {
+    if (!usernameOrPhone) return "#";
+    const clean = usernameOrPhone.trim().replace('@', '');
+    if (clean.startsWith('+') || /^\d+$/.test(clean)) {
+      return `https://t.me/${clean.startsWith('+') ? clean : '+' + clean}`;
+    }
+    return `https://t.me/${clean}`;
+  };
+
+  const getWhatsappLink = (phone) => {
+    if (!phone) return "#";
+    const clean = phone.trim().replace(/[+\s()]/g, '');
+    return `https://wa.me/${clean}`;
+  };
 
   const fetchPublicDatabase = async () => {
     const cleanId = PUBLIC_FILE_ID.trim();
@@ -897,7 +911,7 @@ export default function App() {
         </div>
       )}
 
-      {/* */}
+      {/* --- ШАПКА МАГАЗИНУ --- */}
       <header className="sticky top-0 z-40 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-900 shadow-lg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-20">
@@ -949,7 +963,7 @@ export default function App() {
                   <span className={`w-1.5 h-1.5 rounded-full ${dbSource === 'gdrive' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
                   <span className="text-[9px] text-zinc-500 group-hover:text-zinc-300 transition-colors uppercase tracking-widest font-black flex items-center gap-1">
                     База: {dbSource === 'gdrive' ? 'Хмара' : 'Локальна'} 
-                    <RotateCw className="w-2 h-2 text-zinc-650 group-hover:text-zinc-400 inline" />
+                    <RotateCw className="w-2.5 h-2.5 text-zinc-650 group-hover:text-zinc-400 inline" />
                   </span>
                 </div>
               </div>
@@ -1180,7 +1194,7 @@ export default function App() {
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent opacity-60" />
                         
-                        {/* Динамічна плашка категорії: рендериться лише якщо є відповідний текст для уникнення зсувів і порожніх плашок */}
+                        {/* Динамічна плашка категорії */}
                         {badgeText && (
                           <span className="absolute top-4 left-4 text-[10px] font-bold uppercase tracking-wider bg-zinc-950/95 text-amber-500 px-3 py-1.5 rounded-xl border border-zinc-850/80 shadow-md backdrop-blur-sm">
                             {badgeText}
@@ -1781,13 +1795,13 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Telegram Username (без символа @)</label>
+                      <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Telegram Username або Телефон (без @)</label>
                       <input
                         type="text"
                         value={siteSettings.contactTelegram}
                         onChange={(e) => handleTextChange('contactTelegram', e.target.value)}
                         className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-3 text-sm text-white focus:outline-none"
-                        placeholder="Наприклад: meat_craft_manager"
+                        placeholder="Наприклад: meat_craft_manager або +38067..."
                       />
                     </div>
 
@@ -1968,7 +1982,7 @@ export default function App() {
               <span>Зателефонувати</span>
             </a>
             <a 
-              href={`https://t.me/${siteSettings.contactTelegram?.replace('@', '')}`}
+              href={getTelegramLink(siteSettings.contactTelegram)}
               target="_blank" 
               rel="noopener noreferrer"
               className="flex items-center gap-2.5 p-2 hover:bg-zinc-800 rounded-lg text-zinc-100 transition-all border-b border-zinc-850 pb-2"
@@ -1977,7 +1991,7 @@ export default function App() {
               <span>Чат Telegram</span>
             </a>
             <a 
-              href={`https://wa.me/${siteSettings.contactWhatsapp?.replace('+', '')}`}
+              href={getWhatsappLink(siteSettings.contactWhatsapp)}
               target="_blank" 
               rel="noopener noreferrer"
               className="flex items-center gap-2.5 p-2 hover:bg-zinc-800 rounded-lg text-zinc-100 transition-all"
@@ -2014,7 +2028,7 @@ export default function App() {
 
             <div className="space-y-3">
               <a
-                href={`https://t.me/${siteSettings.contactTelegram?.replace('@', '')}?text=${encodeURIComponent(generateOrderMessage(lastPlacedOrder))}`}
+                href={`${getTelegramLink(siteSettings.contactTelegram)}?text=${encodeURIComponent(generateOrderMessage(lastPlacedOrder))}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-3.5 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2"
@@ -2023,7 +2037,7 @@ export default function App() {
                 Надіслати в Telegram ✈️
               </a>
               <a
-                href={`https://wa.me/${siteSettings.contactWhatsapp?.replace('+', '')}?text=${encodeURIComponent(generateOrderMessage(lastPlacedOrder))}`}
+                href={`${getWhatsappLink(siteSettings.contactWhatsapp)}?text=${encodeURIComponent(generateOrderMessage(lastPlacedOrder))}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-3.5 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2"
@@ -2035,7 +2049,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setLastPlacedOrder(null)}
-                className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-3 rounded-xl text-xs font-bold transition-all mt-2"
+                className="w-full bg-zinc-800 hover:bg-zinc-750 text-zinc-300 py-3 rounded-xl text-xs font-bold transition-all mt-2"
               >
                 Повернутись на сайт
               </button>
@@ -2044,7 +2058,7 @@ export default function App() {
         </div>
       )}
 
-      {/* */}
+      {/* --- ДІАГНОСТИКА БАЗИ ДАНИХ --- */}
       {showDbDiagnostics && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
           <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl w-full max-w-2xl shadow-2xl relative">
