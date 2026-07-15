@@ -25,7 +25,7 @@ import {
 // ⚠️ КОНФІГУРАЦІЯ ГЛОБАЛЬНОЇ БАЗИ ДАНИХ (ДЛЯ КЛІЄНТІВ)
 // ==========================================
 // Публічний ID файлу бази даних (оновлений та виправлений на ваш актуальний ID)
-const PUBLIC_FILE_ID = "1hFqJw14-7LUDBXcIzqzJIvC-03yzhCCT"; 
+const PUBLIC_FILE_ID = "1hFqJw14-7LUDBXcIzqzJIvC-O3yzhCCT"; 
 
 // Публічний API-ключ для безпроблемного зчитування даних без авторизації
 const PUBLIC_API_KEY = "AIzaSyCczGkh9GrG0phiQP6e_yi44IiZVyEEANo";
