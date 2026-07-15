@@ -102,7 +102,6 @@ export default function App() {
       const saved = localStorage.getItem('meat_store_products');
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Перевіряємо, чи це коректний масив із реальними товарами
         if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].name) {
           return parsed;
         }
@@ -126,7 +125,6 @@ export default function App() {
     return [];
   });
 
-  // Локальні налаштування текстів та контактів на головній сторінці
   const [siteSettings, setSiteSettings] = useState(() => {
     const defaultSettings = {
       title: 'М\'ЯСНИЙ КРАФТ',
@@ -165,6 +163,11 @@ export default function App() {
   // Джерело бази даних для відображення статусу
   const [dbSource, setDbSource] = useState('local'); // 'local' | 'gdrive'
   const [showContactMenu, setShowContactMenu] = useState(false);
+
+  // Стан для інтерактивного вікна діагностики бази даних
+  const [dbLogs, setDbLogs] = useState([]);
+  const [showDbDiagnostics, setShowDbDiagnostics] = useState(false);
+  const [isPrivateError, setIsPrivateError] = useState(false);
 
   // --- СТАН GOOGLE DRIVE ІНТЕГРАЦІЇ ---
   const [gdriveConfig, setGdriveConfig] = useState(() => {
@@ -220,144 +223,118 @@ export default function App() {
     localStorage.setItem('meat_store_settings', JSON.stringify(siteSettings));
   }, [siteSettings]);
 
-  // --- МЕТОД: ЗАВАНТАЖЕННЯ ДАНИХ З ПУБЛІЧНОГО GOOGLE DRIVE ДЛЯ ЗВИЧАЙНИХ КОРИСТУВАЧІВ ---
   const fetchPublicDatabase = async () => {
     const cleanId = PUBLIC_FILE_ID.trim();
-    if (!cleanId || cleanId === '1aBcDeFgHiJkLmNoPqRsTuVwXyZ' || cleanId === '') return;
+    if (!cleanId || cleanId === '1aBcDeFgHiJkLmNoPqRsTuVwXyZ' || cleanId === '') {
+      setDbLogs(["Лог: ID хмарного файлу Google Drive порожній або встановлено плейсхолдер."]);
+      return;
+    }
     
-    // Різні варіанти посилань Google Drive для прямого завантаження вмісту файлу
+    let tempLogs = [`Початок завантаження бази даних для ID: ${cleanId} о ${new Date().toLocaleTimeString()}`];
+    
+    // Посилання Google Drive для завантаження
     const driveUrls = [
       `https://docs.google.com/uc?export=download&id=${cleanId}`,
       `https://drive.usercontent.com/download?id=${cleanId}&export=download`,
       `https://drive.google.com/uc?export=download&id=${cleanId}`
     ];
     
-    // Каскадний список CORS-проксі (без невідповідного проксі зображень google)
+    // Каскад проксі
     const proxies = [
-      (url) => `https://corsproxy.io/?${encodeURIComponent(url)}&_cb=${Date.now()}`,
-      (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}&_cb=${Date.now()}`,
-      (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}&_cb=${Date.now()}`
+      { name: 'Прямий безпроксі запит', fn: (url) => url },
+      { name: 'Corsproxy.io', fn: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}&_cb=${Date.now()}` },
+      { name: 'Codetabs Proxy', fn: (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}&_cb=${Date.now()}` },
+      { name: 'AllOrigins Raw', fn: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}&_cb=${Date.now()}` }
     ];
 
     let loadedSuccessfully = false;
     let fileIsPrivate = false;
 
-    // Спершу спробуємо прямий запит (на випадок, якщо CORS відключено розширенням або в додатку)
-    for (const baseUrl of driveUrls) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000);
-        const response = await fetch(baseUrl, { signal: controller.signal });
-        clearTimeout(timeoutId);
+    // Каскадний обхід
+    for (const proxy of proxies) {
+      for (const baseUrl of driveUrls) {
+        try {
+          const targetUrl = proxy.fn(baseUrl);
+          tempLogs.push(`[${proxy.name}] Спроба запиту до: ${targetUrl.substring(0, 75)}...`);
+          
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 4000);
 
-        if (response.ok) {
-          const text = await response.text();
-          const trimmed = text.trim();
-          if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-            const data = JSON.parse(trimmed);
-            if (data.products && data.products.length > 0) {
+          const response = await fetch(targetUrl, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          
+          if (response.ok) {
+            const text = await response.text();
+            const trimmed = text.trim();
+            
+            let data = null;
+
+            // Спробуємо розпарсити
+            if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+              try {
+                data = JSON.parse(trimmed);
+              } catch (jsonErr) {
+                tempLogs.push(`[${proxy.name}] Помилка розбору JSON: ${jsonErr.message}`);
+              }
+            } 
+            
+            // Спроба розбору для AllOrigins
+            if (!data) {
+              try {
+                const wrapped = JSON.parse(trimmed);
+                if (wrapped && wrapped.contents) {
+                  const innerTrimmed = wrapped.contents.trim();
+                  if (innerTrimmed.startsWith('{') || innerTrimmed.startsWith('[')) {
+                    data = JSON.parse(innerTrimmed);
+                  } else if (innerTrimmed.includes('<!DOCTYPE') || innerTrimmed.includes('<html') || innerTrimmed.includes('ServiceLogin') || innerTrimmed.includes('sign-in')) {
+                    fileIsPrivate = true;
+                  }
+                }
+              } catch (e) {
+                // Не AllOrigins
+              }
+            }
+
+            // Перевіримо на сторінку входу Google (показник приватності)
+            if (!data && (trimmed.includes('<!DOCTYPE') || trimmed.includes('<html') || trimmed.includes('ServiceLogin') || trimmed.includes('sign-in') || trimmed.includes('google-signin'))) {
+              fileIsPrivate = true;
+              tempLogs.push(`[${proxy.name}] Google Drive повернув сторінку входу. Файл є приватним!`);
+            }
+
+            if (data && data.products && data.products.length > 0) {
               setProducts(data.products);
               if (data.siteSettings) setSiteSettings(data.siteSettings);
               if (data.orders) setOrders(data.orders);
-              console.log("Успішний прямий імпорт бази даних без використання проксі!");
+              
+              tempLogs.push(`[${proxy.name}] УСПІХ! Хмарну базу даних завантажено та застосовано.`);
               loadedSuccessfully = true;
               setDbSource('gdrive');
-              break;
+              setIsPrivateError(false);
+              break; 
             }
+          } else {
+            tempLogs.push(`[${proxy.name}] Помилка сервера: ${response.status}`);
           }
+        } catch (e) {
+          tempLogs.push(`[${proxy.name}] Не вдалося: ${e.message}`);
         }
-      } catch (e) {
-        console.log("Прямий запит відхилено CORS. Переходимо до проксі.");
       }
+      if (loadedSuccessfully) break;
     }
 
-    // Якщо прямий запит не вдався (CORS), починаємо обхід проксі-серверів
-    if (!loadedSuccessfully) {
-      for (const getProxyUrl of proxies) {
-        for (const baseUrl of driveUrls) {
-          try {
-            const targetUrl = getProxyUrl(baseUrl);
-            console.log(`Запит через каскадний проксі: ${targetUrl}`);
-            
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-            const response = await fetch(targetUrl, { signal: controller.signal });
-            clearTimeout(timeoutId);
-            
-            if (response.ok) {
-              const text = await response.text();
-              const trimmed = text.trim();
-              
-              let data = null;
-
-              // Спробуємо розпарсити як прямий JSON
-              if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-                try {
-                  data = JSON.parse(trimmed);
-                } catch (jsonErr) {
-                  console.warn("Помилка парсингу прямого JSON:", jsonErr);
-                }
-              } 
-              
-              // Якщо AllOrigins повернув загорнутий JSON
-              if (!data) {
-                try {
-                  const wrapped = JSON.parse(trimmed);
-                  if (wrapped && wrapped.contents) {
-                    const innerTrimmed = wrapped.contents.trim();
-                    if (innerTrimmed.startsWith('{') || innerTrimmed.startsWith('[')) {
-                      data = JSON.parse(innerTrimmed);
-                    } else if (innerTrimmed.includes('<!DOCTYPE') || innerTrimmed.includes('<html') || innerTrimmed.includes('ServiceLogin') || innerTrimmed.includes('sign-in')) {
-                      fileIsPrivate = true;
-                    }
-                  }
-                } catch (e) {
-                  // Формат відповіді не AllOrigins
-                }
-              }
-
-              // Перевіримо на наявність сторінки авторизації Google Drive
-              if (!data && (trimmed.includes('<!DOCTYPE') || trimmed.includes('<html') || trimmed.includes('ServiceLogin') || trimmed.includes('sign-in') || trimmed.includes('google-signin'))) {
-                fileIsPrivate = true;
-              }
-
-              // Якщо дані успішно завантажено
-              if (data && data.products && data.products.length > 0) {
-                setProducts(data.products);
-                if (data.siteSettings) {
-                  setSiteSettings(data.siteSettings);
-                }
-                if (data.orders) {
-                  setOrders(data.orders);
-                }
-                
-                console.log("Базу даних магазину успішно імпортовано через проксі-сервер!");
-                loadedSuccessfully = true;
-                setDbSource('gdrive');
-                break; 
-              }
-            }
-          } catch (e) {
-            console.warn(`Невдалий запит через поточний проксі-вузол:`, e.message);
-          }
-        }
-        if (loadedSuccessfully) break;
-      }
-    }
+    setDbLogs(tempLogs);
 
     if (!loadedSuccessfully) {
-      console.error("Не вдалося завантажити базу з Google Drive через жоден доступний проксі.");
       setDbSource('local');
       if (fileIsPrivate) {
-        showToast("Базу знайдено, але доступ обмежено. Будь ласка, відкрийте публічний доступ на Google Диску!", "error");
+        setIsPrivateError(true);
+        showToast("Файл приватний! Будь ласка, відкрийте публічний доступ на Google Диску.", "error");
       } else {
         showToast("Працюємо на резервній локальній копії (Google Drive недоступний).", "info");
       }
     }
   };
 
-  // --- ЕФЕКТ 1: ЗАПУСК ЗАВАНТАЖЕННЯ ПРИ СТАРТІ ---
   useEffect(() => {
     const timer = setTimeout(() => {
       fetchPublicDatabase();
@@ -366,7 +343,6 @@ export default function App() {
     return () => clearTimeout(timer);
   }, []);
 
-  // --- ЕФЕКТ 2: ЗАВАНТАЖЕННЯ GOOGLE IDENTITY SDK ДЛЯ АВТОРИЗАЦІЇ АДМІНІСТРАТОРА ---
   useEffect(() => {
     if (isAdmin) {
       const script = document.createElement('script');
@@ -376,14 +352,6 @@ export default function App() {
       document.body.appendChild(script);
     }
   }, [isAdmin]);
-
-  // Покажчик повідомлень (Toast)
-  const showToast = (message, type = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => {
-      setToast(null);
-    }, 4500);
-  };
 
   // Авторизація адміна на сайті
   const handleAdminLogin = (e) => {
@@ -781,7 +749,6 @@ export default function App() {
     return matchesCategory && matchesSearch;
   });
 
-  // --- ДОПОМІЖНИЙ МЕТОД: ГЕНЕРАЦІЯ ШАБЛОНУ ТЕКСТУ ЗАМОВЛЕННЯ ДЛЯ МЕСЕНДЖЕРІВ ---
   const generateOrderMessage = (order) => {
     if (!order) return "";
     let itemsText = order.items.map((item, idx) => 
@@ -907,24 +874,17 @@ export default function App() {
                   <p className="text-xs text-amber-500/90 font-medium tracking-wide">{siteSettings.subtitle}</p>
                 )}
 
-                {/* Елегантний індикатор статусу підключення бази */}
-                <div className="flex items-center gap-1.5 mt-1">
+                {/* Інтерактивний індикатор підключення бази */}
+                <div 
+                  className="flex items-center gap-1.5 mt-1 cursor-pointer hover:opacity-80 transition-all select-none" 
+                  onClick={() => setShowDbDiagnostics(true)}
+                  title="Клацніть для перевірки з'єднання"
+                >
                   <span className={`w-1.5 h-1.5 rounded-full ${dbSource === 'gdrive' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
-                  <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-black">
-                    База: {dbSource === 'gdrive' ? 'Хмара' : 'Локальна'}
+                  <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-black flex items-center gap-1">
+                    База: {dbSource === 'gdrive' ? 'Хмара' : 'Локальна'} 
+                    <RotateCw className="w-2 h-2 text-zinc-600 inline" />
                   </span>
-                  {isAdmin && (
-                    <button 
-                      onClick={() => {
-                        showToast("Оновлення бази даних з Google Drive...", "info");
-                        fetchPublicDatabase();
-                      }}
-                      className="p-0.5 text-zinc-650 hover:text-zinc-300 transition-all rounded hover:bg-zinc-900"
-                      title="Примусово оновити базу даних з хмари"
-                    >
-                      <RotateCw className="w-2.5 h-2.5" />
-                    </button>
-                  )}
                 </div>
               </div>
             </div>
@@ -1109,7 +1069,7 @@ export default function App() {
               </div>
 
               {/* Перемикання категорій */}
-              <div className="flex items-center gap-2 overflow-x-auto pb-2 lg:pb-0 scrollbar-none">
+              <div className="flex items-center gap-2 overflow-x-auto pb-2 lg:pb-0 scrollbar-none font-sans text-xs">
                 {[
                   { id: 'all', name: 'Усе меню' },
                   { id: 'sausages', name: 'Ковбаси & Сосиски' },
@@ -1661,7 +1621,7 @@ export default function App() {
                           <div className="flex items-center gap-3">
                             <span className="text-lg font-bold text-white">{order.id}</span>
                             <span className={`text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider ${
-                              order.status === 'new' ? 'bg-amber-500/20 text-amber-400' :
+                              order.status === 'new' ? 'bg-emerald-500/20 text-emerald-400' :
                               order.status === 'completed' ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-900' :
                               'bg-zinc-800 text-zinc-400'
                             }`}>
@@ -1839,7 +1799,7 @@ export default function App() {
                             </button>
                             <button
                               onClick={disconnectGdrive}
-                              className="bg-zinc-800 hover:bg-zinc-750 text-red-450 font-bold py-3.5 px-6 rounded-xl text-xs transition-all border border-zinc-750"
+                              className="bg-zinc-800 hover:bg-zinc-750 text-red-455 font-bold py-3.5 px-6 rounded-xl text-xs transition-all border border-zinc-750"
                             >
                               Відключити
                             </button>
@@ -1887,8 +1847,8 @@ export default function App() {
 
       </main>
 
-      {/* 🟢 ПЛАВАЮЧА КНОПКА ЗВ’ЯЗКУ (Floating Widget) */}
-      <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3 font-sans">
+      {/* 🟢 ПЛАВАЮЧА КНОПКА ЗВ’ЯЗКУ */}
+      <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3 font-sans select-none">
         {showContactMenu && (
           <div className="flex flex-col gap-2 bg-zinc-900 border border-zinc-850 p-3 rounded-2xl shadow-2xl animate-fade-in text-xs font-bold w-48">
             <a 
@@ -1927,7 +1887,7 @@ export default function App() {
         </button>
       </div>
 
-      {/* 🔴 МОДАЛКА УСПІШНОГО ЗАМОВЛЕННЯ ДЛЯ КЛІЄНТУ (КНОПКИ ТГ ТА ВАТАП) */}
+      {/* 🔴 МОДАЛКА УСПІШНОГО ЗАМОВЛЕННЯ ДЛЯ КЛІЄНТУ */}
       {lastPlacedOrder && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
           <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl w-full max-w-lg shadow-2xl relative">
@@ -1970,6 +1930,69 @@ export default function App() {
                 className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-3 rounded-xl text-xs font-bold transition-all mt-2"
               >
                 Повернутись на сайт
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ⚙️ ДІАГНОСТИЧНЕ МОДАЛЬНЕ ВІКНО БАЗИ ДАНИХ (Diagnostics Dashboard) */}
+      {showDbDiagnostics && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
+          <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl w-full max-w-2xl shadow-2xl relative">
+            <h3 className="text-xl font-bold text-white mb-2 font-serif flex items-center gap-2">
+              <Database className="w-5 h-5 text-amber-500" />
+              Діагностика хмарної бази даних
+            </h3>
+            <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
+              Ця панель аналізує, чому ваші покупці можуть не бачити внесених вами змін. Дані завантажуються безпосередньо з вашого Google Диску.
+            </p>
+
+            <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-850 font-mono text-[11px] leading-relaxed max-h-56 overflow-y-auto mb-6 text-zinc-300">
+              <div className="font-bold text-amber-500 mb-2">// Звіт про спробу підключення:</div>
+              {dbLogs.length === 0 ? (
+                <div className="text-zinc-500">Поки що запитів не було зроблено. Натисніть «Перевірити».</div>
+              ) : (
+                dbLogs.map((log, idx) => (
+                  <div key={idx} className="border-b border-zinc-900 pb-1.5 mb-1 last:border-0 last:pb-0">
+                    {log}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {isPrivateError && (
+              <div className="bg-red-950/40 border border-red-800 p-4 rounded-xl mb-6 text-xs text-red-200">
+                <AlertTriangle className="w-5 h-5 text-red-500 float-left mr-3 mb-2 shrink-0 animate-bounce" />
+                <h4 className="font-bold mb-1 text-red-400">🚨 КРИТИЧНО: ФАЙЛ Є ПРИВАТНИМ!</h4>
+                <p className="leading-relaxed">
+                  Google Drive повернув сторінку авторизації замість самої бази. Через це сторонні користувачі не мають доступу до файлу і бачать базову демонстраційну компіляцію.
+                  <br />
+                  <span className="font-bold block mt-2 text-white">Як миттєво виправити:</span>
+                  1. Відкрийте ваш Google Диск.<br />
+                  2. Клацніть правою кнопкою миші на файл <b>meat_store_db.json</b> -> <b>Поділитися</b> (Share).<br />
+                  3. Змініть загальний доступ з <i>«Обмежений»</i> на <b>«Усі, хто мають посилання»</b> (Anyone with the link) з роллю <b>«Переглядач»</b> (Viewer).
+                </p>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setDbLogs([]);
+                  fetchPublicDatabase();
+                }}
+                className="flex-1 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold py-3.5 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2"
+              >
+                <RotateCw className="w-4 h-4 animate-spin" />
+                Запустити перевірку
+              </button>
+              
+              <button
+                onClick={() => setShowDbDiagnostics(false)}
+                className="bg-zinc-800 hover:bg-zinc-750 text-zinc-300 px-6 py-3.5 rounded-xl text-xs font-bold transition-all"
+              >
+                Закрити
               </button>
             </div>
           </div>
