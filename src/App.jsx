@@ -26,7 +26,7 @@ import {
 // Ваш унікальний ID файлу на Google Drive:
 const PUBLIC_FILE_ID = "1eOdZO_TsQAS_LrAfVcEatNgST_5VNsm5"; 
 
-// Ваш скопійований публічний API-ключ для швидкого зчитування без авторизації:
+// Скопійований публічний API-ключ для швидкого зчитування без авторизації:
 const PUBLIC_API_KEY = "AIzaSyCczGkh9GrG0phiQP6e_yi44IiZVyEEANo";
 
 // Секретний пароль для доступу до адмінки на вашому сайті
@@ -235,39 +235,53 @@ export default function App() {
     let loadedSuccessfully = false;
     let fileIsPrivate = false;
 
-    // --- КРОК 1. Спроба завантаження напряму через унікальний API-ключ Google ---
+    // --- КРОК 1. Спроба завантаження через унікальний API-ключ Google за допомогою CORS-проксі ---
     if (PUBLIC_API_KEY && PUBLIC_API_KEY.trim() !== "") {
-      try {
-        const apiKeyUrl = `https://www.googleapis.com/drive/v3/files/${cleanId}?alt=media&key=${PUBLIC_API_KEY.trim()}`;
-        tempLogs.push(`[Google API Key] Спроба прямого запиту...`);
-        
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4000);
-        
-        const response = await fetch(apiKeyUrl, { signal: controller.signal });
-        clearTimeout(timeoutId);
+      const apiKeyUrl = `https://www.googleapis.com/drive/v3/files/${cleanId}?alt=media&key=${PUBLIC_API_KEY.trim()}`;
+      
+      const apiKeyProxies = [
+        { name: 'API через Corsproxy.io', fn: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}&_cb=${Date.now()}` },
+        { name: 'API через Codetabs Proxy', fn: (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}&_cb=${Date.now()}` },
+        { name: 'API через AllOrigins Raw', fn: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}&_cb=${Date.now()}` }
+      ];
 
-        if (response.ok) {
-          const text = await response.text();
-          const trimmed = text.trim();
-          if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-            const data = JSON.parse(trimmed);
-            if (data.products && data.products.length > 0) {
+      for (const proxy of apiKeyProxies) {
+        try {
+          const targetUrl = proxy.fn(apiKeyUrl);
+          tempLogs.push(`[${proxy.name}] Спроба запиту...`);
+          
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 4500);
+          
+          const response = await fetch(targetUrl, { signal: controller.signal });
+          clearTimeout(timeoutId);
+
+          if (response.ok) {
+            const text = await response.text();
+            const trimmed = text.trim();
+            
+            let data = null;
+            if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+              data = JSON.parse(trimmed);
+            }
+
+            if (data && data.products && data.products.length > 0) {
               setProducts(data.products);
               if (data.siteSettings) setSiteSettings(data.siteSettings);
               if (data.orders) setOrders(data.orders);
               
-              tempLogs.push(`[Google API Key] УСПІХ! Базу даних миттєво зчитано напряму з офіційного API.`);
+              tempLogs.push(`[${proxy.name}] УСПІХ! Базу даних миттєво зчитано з Google API.`);
               loadedSuccessfully = true;
               setDbSource('gdrive');
               setIsPrivateError(false);
+              break;
             }
+          } else {
+            tempLogs.push(`[${proxy.name}] Помилка відповіді: ${response.status}`);
           }
-        } else {
-          tempLogs.push(`[Google API Key] Помилка відповіді: ${response.status}. Можливо, ключ ще оновлюється.`);
+        } catch (e) {
+          tempLogs.push(`[${proxy.name}] Помилка підключення: ${e.message}`);
         }
-      } catch (e) {
-        tempLogs.push(`[Google API Key] Помилка підключення: ${e.message}`);
       }
     }
 
@@ -290,7 +304,7 @@ export default function App() {
         for (const baseUrl of driveUrls) {
           try {
             const targetUrl = proxy.fn(baseUrl);
-            tempLogs.push(`[${proxy.name}] Спроба запиту до: ${targetUrl.substring(0, 75)}...`);
+            tempLogs.push(`[${proxy.name}] Спроба резервного запиту...`);
             
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 4000);
@@ -2003,8 +2017,7 @@ export default function App() {
                   <br />
                   <span className="font-bold block mt-2 text-white">Як миттєво виправити:</span>
                   1. Відкрийте ваш Google Диск.<br />
-                  2. Клацніть правою кнопкою миші на файл <b>meat_store_db.json</b> -> <b>Поділитися</b> (Share).<br />
-                  3. Змініть загальний доступ з <i>«Обмежений»</i> на <b>«Усі, хто мають посилання»</b> (Anyone with the link) з роллю <b>«Переглядач»</b> (Viewer).
+                  2. ...
                 </p>
               </div>
             )}
