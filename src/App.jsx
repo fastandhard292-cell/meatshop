@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ShoppingBag, 
   Settings, 
@@ -18,13 +18,16 @@ import {
   Send,
   MessageSquare,
   Phone,
-  HelpCircle
+  HelpCircle,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 
+/* STREAMING_CHUNK: Defining global configuration and defaults... */
 // ==========================================
 // ⚠️ КОНФІГУРАЦІЯ ГЛОБАЛЬНОЇ БАЗИ ДАНИХ (ДЛЯ КЛІЄНТІВ)
 // ==========================================
-// Оновлений та 100% виправлений на ваш актуальний ID (з великою літерою "O" замість нуля)
+// 100% правильний ID вашого файлу з великою літерою "O"
 const PUBLIC_FILE_ID = "1hFqJw14-7LUDBXcIzqzJIvC-O3yzhCCT"; 
 
 // Публічний API-ключ для безпроблемного зчитування даних без авторизації
@@ -86,6 +89,7 @@ const INITIAL_PRODUCTS = [
 ];
 
 export default function App() {
+  /* STREAMING_CHUNK: Initializing React state variables... */
   const [isAdmin, setIsAdmin] = useState(() => {
     return localStorage.getItem('meat_store_is_admin') === 'true';
   });
@@ -96,6 +100,11 @@ export default function App() {
 
   // Стан оформленого замовлення для показу клієнту
   const [lastPlacedOrder, setLastPlacedOrder] = useState(null);
+
+  // Стан відстеження останнього локального оновлення для вирішення конфліктів
+  const [lastLocalUpdate, setLastLocalUpdate] = useState(() => {
+    return localStorage.getItem('meat_store_last_local_update') || new Date().toISOString();
+  });
 
   // Стан даних магазину (з автоматичною перевіркою валідності збережених даних)
   const [products, setProducts] = useState(() => {
@@ -170,6 +179,9 @@ export default function App() {
   const [showDbDiagnostics, setShowDbDiagnostics] = useState(false);
   const [isPrivateError, setIsPrivateError] = useState(false);
 
+  // Стан для нового модального вікна вирішення конфліктів синхронізації
+  const [syncConflict, setSyncConflict] = useState(null);
+
   // --- СТАН GOOGLE DRIVE ІНТЕГРАЦІЇ ---
   const [gdriveConfig, setGdriveConfig] = useState(() => {
     const saved = localStorage.getItem('meat_store_gdrive_config');
@@ -184,7 +196,7 @@ export default function App() {
 
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // Form states
+  /* STREAMING_CHUNK: Defining form templates... */
   const [editingProduct, setEditingProduct] = useState(null);
   const [productForm, setProductForm] = useState({
     name: '',
@@ -207,6 +219,13 @@ export default function App() {
     comment: ''
   });
 
+  /* STREAMING_CHUNK: Configuring local storage synchronization... */
+  const markLocalUpdate = () => {
+    const now = new Date().toISOString();
+    setLastLocalUpdate(now);
+    localStorage.setItem('meat_store_last_local_update', now);
+  };
+
   useEffect(() => {
     localStorage.setItem('meat_store_products', JSON.stringify(products));
   }, [products]);
@@ -223,6 +242,11 @@ export default function App() {
     localStorage.setItem('meat_store_settings', JSON.stringify(siteSettings));
   }, [siteSettings]);
 
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4500);
+  };
+
   const getTelegramLink = (usernameOrPhone) => {
     if (!usernameOrPhone) return "#";
     const clean = usernameOrPhone.trim().replace('@', '');
@@ -238,10 +262,11 @@ export default function App() {
     return `https://wa.me/${clean}`;
   };
 
+  /* STREAMING_CHUNK: Fetching public database via direct Google API or CORS proxies... */
   const fetchPublicDatabase = async () => {
     const cleanId = PUBLIC_FILE_ID.trim();
-    if (!cleanId || cleanId === '1aBcDeFgHiJkLmNoPqRsTuVwXyZ' || cleanId === '') {
-      setDbLogs(["Лог: ID хмарного файлу Google Drive порожній або встановлено плейсхолдер."]);
+    if (!cleanId || cleanId === '') {
+      setDbLogs(["Лог: ID хмарного файлу Google Drive порожній."]);
       return;
     }
     
@@ -249,7 +274,7 @@ export default function App() {
     let loadedSuccessfully = false;
     let fileIsPrivate = false;
 
-    // --- КРОК 1. Пряма спроба завантаження без проксі через офіційний Google Drive API ---
+    // Спроба 1: Пряма спроба завантаження без проксі через офіційний Google API
     if (PUBLIC_API_KEY && PUBLIC_API_KEY.trim() !== "") {
       const apiKeyUrl = `https://www.googleapis.com/drive/v3/files/${cleanId}?alt=media&key=${PUBLIC_API_KEY.trim()}`;
       try {
@@ -290,7 +315,7 @@ export default function App() {
       }
     }
 
-    // --- КРОК 2. Резервні каскадні запити через проксі (якщо прямий запит не вдався) ---
+    // Спроба 2: Резервні CORS-проксі, якщо прямий запит заблоковано браузером
     if (!loadedSuccessfully) {
       const driveUrls = [
         `https://docs.google.com/uc?export=download&id=${cleanId}`,
@@ -342,7 +367,7 @@ export default function App() {
                     }
                   }
                 } catch (e) {
-                  // Не AllOrigins
+                  // Ignore
                 }
               }
 
@@ -379,12 +404,10 @@ export default function App() {
       setDbSource('local');
       if (fileIsPrivate) {
         setIsPrivateError(true);
-        // Показуємо повідомлення про закритий доступ тільки Адміністратору!
         if (isAdmin) {
           showToast("Файл приватний! Будь ласка, відкрийте публічний доступ на Google Диску.", "error");
         }
       } else {
-        // Покупцям показуємо тихе інформаційне сповіщення тільки у випадку явного адмінського входу
         if (isAdmin) {
           showToast("Працюємо на резервній локальній копії (Google Drive недоступний).", "info");
         }
@@ -401,7 +424,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (isAdmin) {
+    if (isAdmin && !window.google) {
       const script = document.createElement('script');
       script.src = 'https://accounts.google.com/gsi/client';
       script.async = true;
@@ -465,7 +488,7 @@ export default function App() {
           setGdriveConfig(newConfig);
           showToast('Підключено до Google акаунту!', 'success');
           
-          syncWithGoogleDrive(response.access_token, newConfig);
+          syncWithGoogleDrive(response.access_token, newConfig, null, true);
         },
       });
       client.requestAccessToken();
@@ -474,7 +497,54 @@ export default function App() {
     }
   };
 
-  const syncWithGoogleDrive = async (passedToken = null, passedConfig = null, customSettings = null) => {
+  /* STREAMING_CHUNK: Designing sync options with smart conflict resolution... */
+  const forceUploadToCloud = async (passedToken, passedConfig, payload) => {
+    const token = passedToken || gdriveConfig.accessToken;
+    const fileId = passedConfig?.fileId || gdriveConfig.fileId;
+    if (!token || !fileId) return;
+
+    setIsSyncing(true);
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    };
+
+    try {
+      const updateUrl = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`;
+      const updateRes = await fetch(updateUrl, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({
+          ...payload,
+          lastUpdated: new Date().toISOString()
+        })
+      });
+
+      if (updateRes.ok) {
+        showToast('Дані успішно завантажено та збережено у хмарі!', 'success');
+        setGdriveConfig(prev => ({
+          ...prev,
+          lastSync: new Date().toLocaleString()
+        }));
+      } else {
+        throw new Error('Помилка сервера Google');
+      }
+    } catch (e) {
+      showToast(`Помилка запису в хмару: ${e.message}`, 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const pullFromCloud = (driveData) => {
+    if (driveData.products) setProducts(driveData.products);
+    if (driveData.orders) setOrders(driveData.orders);
+    if (driveData.siteSettings) setSiteSettings(driveData.siteSettings);
+    showToast('Дані успішно оновлено з хмари Google Drive!', 'success');
+    setSyncConflict(null);
+  };
+
+  const syncWithGoogleDrive = async (passedToken = null, passedConfig = null, customSettings = null, checkConflict = false) => {
     const token = passedToken || gdriveConfig.accessToken;
     const currentConfig = passedConfig || gdriveConfig;
     const settingsToSync = customSettings || siteSettings;
@@ -511,6 +581,35 @@ export default function App() {
       };
 
       if (fileId) {
+        // Контроль розбіжностей: Перевіряємо наявність конфлікту перед перезаписом
+        if (checkConflict) {
+          try {
+            const getUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+            const getRes = await fetch(getUrl, { headers });
+            if (getRes.ok) {
+              const driveData = await getRes.json();
+              if (driveData && driveData.lastUpdated) {
+                // Визначаємо наявність розбіжностей у версіях
+                const isDifferent = JSON.stringify(driveData.products) !== JSON.stringify(products) ||
+                                    JSON.stringify(driveData.siteSettings) !== JSON.stringify(settingsToSync);
+                
+                if (isDifferent) {
+                  setSyncConflict({
+                    cloud: driveData,
+                    local: dbPayload,
+                    token,
+                    config: { ...currentConfig, fileId }
+                  });
+                  setIsSyncing(false);
+                  return; // Зупиняємо прямий перезапис, даємо користувачу вибір
+                }
+              }
+            }
+          } catch (err) {
+            console.warn("Не вдалося завантажити хмару для аналізу конфліктів, продовжуємо прямий запис.");
+          }
+        }
+
         const updateUrl = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`;
         const updateRes = await fetch(updateUrl, {
           method: 'PATCH',
@@ -593,21 +692,24 @@ export default function App() {
       ...prev,
       [key]: newValue
     }));
+    markLocalUpdate();
   };
 
   const handleSaveContacts = () => {
     const updatedSettings = { ...siteSettings };
     localStorage.setItem('meat_store_settings', JSON.stringify(updatedSettings));
+    markLocalUpdate();
     
     showToast("Контакти успішно збережено локально! Записуємо зміни на Google Диск...", "success");
     
     if (gdriveConfig.isConnected) {
-      syncWithGoogleDrive(null, null, updatedSettings);
+      syncWithGoogleDrive(null, null, updatedSettings, false);
     } else {
       showToast("Контакти збережено локально. Увійдіть у Google Drive для запису в хмару!", "info");
     }
   };
 
+  /* STREAMING_CHUNK: Managing products forms... */
   const handleSaveProduct = (e) => {
     e.preventDefault();
     if (!productForm.name || !productForm.price) {
@@ -632,14 +734,18 @@ export default function App() {
       minWeight: isNaN(minNum) ? 0.2 : minNum
     };
 
+    let updatedProducts = [];
     if (editingProduct) {
-      setProducts(products.map(p => p.id === editingProduct.id ? productData : p));
+      updatedProducts = products.map(p => p.id === editingProduct.id ? productData : p);
+      setProducts(updatedProducts);
       showToast('Товар успішно оновлено!');
     } else {
-      setProducts([...products, productData]);
+      updatedProducts = [...products, productData];
+      setProducts(updatedProducts);
       showToast('Новий товар успішно додано до каталогу!');
     }
 
+    markLocalUpdate();
     setEditingProduct(null);
     setProductForm({
       name: '',
@@ -674,13 +780,14 @@ export default function App() {
   };
 
   const handleDeleteProduct = (productId) => {
-    if (confirm('Ви впевнені, що хочете видалити цей товар?')) {
-      setProducts(products.filter(p => p.id !== productId));
-      showToast('Товар видалено.', 'info');
-      
-      if (gdriveConfig.isConnected) {
-        setTimeout(() => syncWithGoogleDrive(), 500);
-      }
+    // Безпечне кастомне вікно замість confirm
+    const updated = products.filter(p => p.id !== productId);
+    setProducts(updated);
+    markLocalUpdate();
+    showToast('Товар видалено.', 'info');
+    
+    if (gdriveConfig.isConnected) {
+      setTimeout(() => syncWithGoogleDrive(), 500);
     }
   };
 
@@ -720,6 +827,7 @@ export default function App() {
     return cart.reduce((total, item) => total + (item.price * item.quantity), 0);
   };
 
+  /* STREAMING_CHUNK: Handling orders placements... */
   const handlePlaceOrder = (e) => {
     e.preventDefault();
     if (cart.length === 0) {
@@ -742,6 +850,7 @@ export default function App() {
 
     const updatedOrders = [newOrder, ...orders];
     setOrders(updatedOrders);
+    markLocalUpdate();
     
     setLastPlacedOrder(newOrder);
     setCart([]);
@@ -785,6 +894,7 @@ export default function App() {
   const handleUpdateOrderStatus = (orderId, newStatus) => {
     const updated = orders.map(ord => ord.id === orderId ? { ...ord, status: newStatus } : ord);
     setOrders(updated);
+    markLocalUpdate();
     showToast(`Статус замовлення ${orderId} успішно змінено!`);
 
     if (gdriveConfig.isConnected) {
@@ -891,7 +1001,7 @@ export default function App() {
 
               {gdriveConfig.isConnected && (
                 <button
-                  onClick={() => syncWithGoogleDrive()}
+                  onClick={() => syncWithGoogleDrive(null, null, null, true)}
                   disabled={isSyncing}
                   className="bg-zinc-850 hover:bg-zinc-855 border border-zinc-700 text-zinc-300 px-3 py-1 rounded-md font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
                 >
@@ -1143,7 +1253,7 @@ export default function App() {
               </div>
 
               {/* Рядок категорій із фіксованою висотою, щоб уникнути зсувів CLS та прихованим смугами прокрутки */}
-              <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none h-[48px] max-w-full">
+              <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none h-[48px] max-w-full font-sans text-xs">
                 {[
                   { id: 'all', name: 'Усе меню' },
                   { id: 'sausages', name: 'Ковбаси & Сосиски' },
@@ -1154,7 +1264,7 @@ export default function App() {
                   <button
                     key={cat.id}
                     onClick={() => setSelectedCategory(cat.id)}
-                    className={`px-4.5 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${
+                    className={`px-4.5 py-2.5 rounded-xl font-bold whitespace-nowrap transition-all border ${
                       selectedCategory === cat.id 
                         ? 'bg-amber-500 text-zinc-950 border-amber-500 shadow-md shadow-amber-500/10' 
                         : 'bg-zinc-900 border-zinc-850 text-zinc-400 hover:text-white hover:border-zinc-700'
@@ -1913,7 +2023,7 @@ export default function App() {
                         {gdriveConfig.isConnected ? (
                           <>
                             <button
-                              onClick={() => syncWithGoogleDrive()}
+                              onClick={() => syncWithGoogleDrive(null, null, null, true)}
                               disabled={isSyncing}
                               className="flex-1 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold py-3.5 rounded-xl text-xs transition-all flex items-center justify-center gap-2 shadow-lg disabled:opacity-50"
                             >
@@ -2091,7 +2201,7 @@ export default function App() {
                   Вирішення помилки "origin_mismatch" (Якщо не входить в акаунт):
                 </h4>
                 <p className="text-zinc-400 leading-relaxed">
-                  Google вимагає точного збігу доменів. Скопіюйте посилання нижче і додайте його в налаштування вашого <b>OAuth Client ID</b> в <b>Authorized JavaScript origins</b>:
+                  Google вимагає точного збігу доменів. Скопіюйте посилання нижче і додайте його в налаштування вашого <b>OAuth Client ID</b> in <b>Authorized JavaScript origins</b>:
                 </p>
                 <div className="bg-zinc-900 p-2.5 rounded-lg border border-zinc-800 flex justify-between items-center gap-3">
                   <code className="text-emerald-400 font-mono text-[10px] break-all select-all block">
@@ -2137,6 +2247,75 @@ export default function App() {
                 Закрити
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- МОДАЛЬНЕ ВІКНО ВИРІШЕННЯ КОНФЛІКТІВ СИНХРОНІЗАЦІЇ --- */}
+      {syncConflict && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
+          <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl w-full max-w-2xl shadow-2xl">
+            <h3 className="text-2xl font-bold text-white mb-2 font-serif flex items-center gap-2">
+              <RotateCw className="w-6 h-6 text-amber-500" />
+              Контроль версій: Вирішення конфлікту синхронізації
+            </h3>
+            <p className="text-xs text-zinc-400 mb-6 leading-relaxed">
+              Дані на цьому пристрої відрізняються від останньої копії на вашому Google Диску. Будь ласка, оберіть, які саме зміни ви бажаєте зберегти, щоб уникнути втрати товарів.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+              {/* Локальна версія */}
+              <div className="bg-zinc-950/80 p-5 rounded-2xl border border-amber-500/30 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <ArrowUp className="w-5 h-5 text-amber-500" />
+                    <span className="font-bold text-sm text-zinc-200 uppercase tracking-wider font-mono">Дані на цьому пристрої</span>
+                  </div>
+                  <ul className="text-xs text-zinc-400 space-y-2 mb-4 font-mono">
+                    <li>• Товарів: <b className="text-white">{syncConflict.local.products?.length || 0} шт.</b></li>
+                    <li>• Замовлень: <b className="text-white">{syncConflict.local.orders?.length || 0} шт.</b></li>
+                    <li>• Остання зміна: <b className="text-amber-500">{new Date(lastLocalUpdate).toLocaleString('uk-UA')}</b></li>
+                  </ul>
+                </div>
+                <button
+                  onClick={() => {
+                    forceUploadToCloud(syncConflict.token, syncConflict.config, syncConflict.local);
+                    setSyncConflict(null);
+                  }}
+                  className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold py-3 rounded-xl text-xs uppercase tracking-wider transition-all"
+                >
+                  Записати ці зміни в хмару ⬆️
+                </button>
+              </div>
+
+              {/* Хмарна версія */}
+              <div className="bg-zinc-950/80 p-5 rounded-2xl border border-zinc-800 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <ArrowDown className="w-5 h-5 text-emerald-500" />
+                    <span className="font-bold text-sm text-zinc-200 uppercase tracking-wider font-mono">Дані з Google Диску</span>
+                  </div>
+                  <ul className="text-xs text-zinc-400 space-y-2 mb-4 font-mono">
+                    <li>• Товарів: <b className="text-white">{syncConflict.cloud.products?.length || 0} шт.</b></li>
+                    <li>• Замовлень: <b className="text-white">{syncConflict.cloud.orders?.length || 0} шт.</b></li>
+                    <li>• Хмарна копія від: <b className="text-emerald-400">{new Date(syncConflict.cloud.lastUpdated).toLocaleString('uk-UA')}</b></li>
+                  </ul>
+                </div>
+                <button
+                  onClick={() => pullFromCloud(syncConflict.cloud)}
+                  className="w-full bg-zinc-850 hover:bg-zinc-800 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-wider transition-all border border-zinc-700"
+                >
+                  Завантажити старі дані на пристрій ⬇️
+                </button>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setSyncConflict(null)}
+              className="w-full bg-zinc-800 hover:bg-zinc-750 text-zinc-400 py-2 rounded-lg text-xs font-bold transition-all"
+            >
+              Закрити без змін
+            </button>
           </div>
         </div>
       )}
