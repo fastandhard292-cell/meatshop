@@ -23,12 +23,13 @@ import {
 // ==========================================
 // ⚠️ КОНФІГУРАЦІЯ ГЛОБАЛЬНОЇ БАЗИ ДАНИХ (ДЛЯ КЛІЄНТІВ)
 // ==========================================
-// 1. Опублікуйте файл "meat_store_db.json" на вашому Google Drive
-//    (Права кнопка миші -> Поділитися -> Усі, хто мають посилання, можуть переглядати)
-// 2. Скопіюйте ID файлу з посилання та вставте його сюди нижче:
+// Ваш унікальний ID файлу на Google Drive:
 const PUBLIC_FILE_ID = "1eOdZO_TsQAS_LrAfVcEatNgST_5VNsm5"; 
 
-// Секретний пароль для доступу до адмінки на сайті
+// Ваш скопійований публічний API-ключ для швидкого зчитування без авторизації:
+const PUBLIC_API_KEY = "AIzaSyCczGkh9GrG0phiQP6e_yi44IiZVyEEANo";
+
+// Секретний пароль для доступу до адмінки на вашому сайті
 const ADMIN_PASSWORD = "1234"; 
 
 // Початкові демонстраційні дані товарів (використовуються як резервна копія)
@@ -231,95 +232,127 @@ export default function App() {
     }
     
     let tempLogs = [`Початок завантаження бази даних для ID: ${cleanId} о ${new Date().toLocaleTimeString()}`];
-    
-    // Посилання Google Drive для завантаження
-    const driveUrls = [
-      `https://docs.google.com/uc?export=download&id=${cleanId}`,
-      `https://drive.usercontent.com/download?id=${cleanId}&export=download`,
-      `https://drive.google.com/uc?export=download&id=${cleanId}`
-    ];
-    
-    // Каскад проксі
-    const proxies = [
-      { name: 'Прямий безпроксі запит', fn: (url) => url },
-      { name: 'Corsproxy.io', fn: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}&_cb=${Date.now()}` },
-      { name: 'Codetabs Proxy', fn: (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}&_cb=${Date.now()}` },
-      { name: 'AllOrigins Raw', fn: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}&_cb=${Date.now()}` }
-    ];
-
     let loadedSuccessfully = false;
     let fileIsPrivate = false;
 
-    // Каскадний обхід
-    for (const proxy of proxies) {
-      for (const baseUrl of driveUrls) {
-        try {
-          const targetUrl = proxy.fn(baseUrl);
-          tempLogs.push(`[${proxy.name}] Спроба запиту до: ${targetUrl.substring(0, 75)}...`);
-          
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 4000);
+    // --- КРОК 1. Спроба завантаження напряму через унікальний API-ключ Google ---
+    if (PUBLIC_API_KEY && PUBLIC_API_KEY.trim() !== "") {
+      try {
+        const apiKeyUrl = `https://www.googleapis.com/drive/v3/files/${cleanId}?alt=media&key=${PUBLIC_API_KEY.trim()}`;
+        tempLogs.push(`[Google API Key] Спроба прямого запиту...`);
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        
+        const response = await fetch(apiKeyUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
 
-          const response = await fetch(targetUrl, { signal: controller.signal });
-          clearTimeout(timeoutId);
-          
-          if (response.ok) {
-            const text = await response.text();
-            const trimmed = text.trim();
-            
-            let data = null;
-
-            // Спробуємо розпарсити
-            if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-              try {
-                data = JSON.parse(trimmed);
-              } catch (jsonErr) {
-                tempLogs.push(`[${proxy.name}] Помилка розбору JSON: ${jsonErr.message}`);
-              }
-            } 
-            
-            // Спроба розбору для AllOrigins
-            if (!data) {
-              try {
-                const wrapped = JSON.parse(trimmed);
-                if (wrapped && wrapped.contents) {
-                  const innerTrimmed = wrapped.contents.trim();
-                  if (innerTrimmed.startsWith('{') || innerTrimmed.startsWith('[')) {
-                    data = JSON.parse(innerTrimmed);
-                  } else if (innerTrimmed.includes('<!DOCTYPE') || innerTrimmed.includes('<html') || innerTrimmed.includes('ServiceLogin') || innerTrimmed.includes('sign-in')) {
-                    fileIsPrivate = true;
-                  }
-                }
-              } catch (e) {
-                // Не AllOrigins
-              }
-            }
-
-            // Перевіримо на сторінку входу Google (показник приватності)
-            if (!data && (trimmed.includes('<!DOCTYPE') || trimmed.includes('<html') || trimmed.includes('ServiceLogin') || trimmed.includes('sign-in') || trimmed.includes('google-signin'))) {
-              fileIsPrivate = true;
-              tempLogs.push(`[${proxy.name}] Google Drive повернув сторінку входу. Файл є приватним!`);
-            }
-
-            if (data && data.products && data.products.length > 0) {
+        if (response.ok) {
+          const text = await response.text();
+          const trimmed = text.trim();
+          if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+            const data = JSON.parse(trimmed);
+            if (data.products && data.products.length > 0) {
               setProducts(data.products);
               if (data.siteSettings) setSiteSettings(data.siteSettings);
               if (data.orders) setOrders(data.orders);
               
-              tempLogs.push(`[${proxy.name}] УСПІХ! Хмарну базу даних завантажено та застосовано.`);
+              tempLogs.push(`[Google API Key] УСПІХ! Базу даних миттєво зчитано напряму з офіційного API.`);
               loadedSuccessfully = true;
               setDbSource('gdrive');
               setIsPrivateError(false);
-              break; 
             }
-          } else {
-            tempLogs.push(`[${proxy.name}] Помилка сервера: ${response.status}`);
           }
-        } catch (e) {
-          tempLogs.push(`[${proxy.name}] Не вдалося: ${e.message}`);
+        } else {
+          tempLogs.push(`[Google API Key] Помилка відповіді: ${response.status}. Можливо, ключ ще оновлюється.`);
         }
+      } catch (e) {
+        tempLogs.push(`[Google API Key] Помилка підключення: ${e.message}`);
       }
-      if (loadedSuccessfully) break;
+    }
+
+    // --- КРОК 2. Резервний каскадний проксі (якщо API-ключ не вказано або виник збій) ---
+    if (!loadedSuccessfully) {
+      const driveUrls = [
+        `https://docs.google.com/uc?export=download&id=${cleanId}`,
+        `https://drive.usercontent.com/download?id=${cleanId}&export=download`,
+        `https://drive.google.com/uc?export=download&id=${cleanId}`
+      ];
+      
+      const proxies = [
+        { name: 'Прямий безпроксі запит', fn: (url) => url },
+        { name: 'Corsproxy.io', fn: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}&_cb=${Date.now()}` },
+        { name: 'Codetabs Proxy', fn: (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}&_cb=${Date.now()}` },
+        { name: 'AllOrigins Raw', fn: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}&_cb=${Date.now()}` }
+      ];
+
+      for (const proxy of proxies) {
+        for (const baseUrl of driveUrls) {
+          try {
+            const targetUrl = proxy.fn(baseUrl);
+            tempLogs.push(`[${proxy.name}] Спроба запиту до: ${targetUrl.substring(0, 75)}...`);
+            
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+            const response = await fetch(targetUrl, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            
+            if (response.ok) {
+              const text = await response.text();
+              const trimmed = text.trim();
+              
+              let data = null;
+
+              if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+                try {
+                  data = JSON.parse(trimmed);
+                } catch (jsonErr) {
+                  tempLogs.push(`[${proxy.name}] Помилка розбору JSON: ${jsonErr.message}`);
+                }
+              } 
+              
+              if (!data) {
+                try {
+                  const wrapped = JSON.parse(trimmed);
+                  if (wrapped && wrapped.contents) {
+                    const innerTrimmed = wrapped.contents.trim();
+                    if (innerTrimmed.startsWith('{') || innerTrimmed.startsWith('[')) {
+                      data = JSON.parse(innerTrimmed);
+                    } else if (innerTrimmed.includes('<!DOCTYPE') || innerTrimmed.includes('<html') || innerTrimmed.includes('ServiceLogin') || innerTrimmed.includes('sign-in')) {
+                      fileIsPrivate = true;
+                    }
+                  }
+                } catch (e) {
+                  // Не AllOrigins
+                }
+              }
+
+              if (!data && (trimmed.includes('<!DOCTYPE') || trimmed.includes('<html') || trimmed.includes('ServiceLogin') || trimmed.includes('sign-in') || trimmed.includes('google-signin'))) {
+                fileIsPrivate = true;
+                tempLogs.push(`[${proxy.name}] Google Drive повернув сторінку входу. Файл є приватним!`);
+              }
+
+              if (data && data.products && data.products.length > 0) {
+                setProducts(data.products);
+                if (data.siteSettings) setSiteSettings(data.siteSettings);
+                if (data.orders) setOrders(data.orders);
+                
+                tempLogs.push(`[${proxy.name}] УСПІХ! Хмарну базу завантажено через резервний проксі-канал.`);
+                loadedSuccessfully = true;
+                setDbSource('gdrive');
+                setIsPrivateError(false);
+                break; 
+              }
+            } else {
+              tempLogs.push(`[${proxy.name}] Помилка сервера: ${response.status}`);
+            }
+          } catch (e) {
+            tempLogs.push(`[${proxy.name}] Не вдалося: ${e.message}`);
+          }
+        }
+        if (loadedSuccessfully) break;
+      }
     }
 
     setDbLogs(tempLogs);
@@ -1963,7 +1996,7 @@ export default function App() {
 
             {isPrivateError && (
               <div className="bg-red-950/40 border border-red-800 p-4 rounded-xl mb-6 text-xs text-red-200">
-                <AlertTriangle className="w-5 h-5 text-red-500 float-left mr-3 mb-2 shrink-0 animate-bounce" />
+                <AlertTriangle className="w-5 h-5 text-red-500 float-left mr-3 mb-2 shrink-0" />
                 <h4 className="font-bold mb-1 text-red-400">🚨 КРИТИЧНО: ФАЙЛ Є ПРИВАТНИМ!</h4>
                 <p className="leading-relaxed">
                   Google Drive повернув сторінку авторизації замість самої бази. Через це сторонні користувачі не мають доступу до файлу і бачать базову демонстраційну компіляцію.
