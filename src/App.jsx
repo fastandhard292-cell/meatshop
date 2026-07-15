@@ -136,9 +136,9 @@ export default function App() {
       bannerDesc: 'Замовляйте свіжі делікатеси, натуральні ковбаси та соковите мариноване м\'ясо до вашого столу. Усі замовлення збираються вручну та з любов\'ю.',
       advantage1: 'ЕКОЛОГІЧНО ЧИСТА СИРОВИНА',
       advantage2: 'ВЛАСНЕ КОПТИЛЬНЕ ВИРОБНИЦТВО НА ДРОВАХ',
-      contactPhone: '+380671234567',
-      contactTelegram: 'vash_username',
-      contactWhatsapp: '380671234567' 
+      contactPhone: '+380984536052',
+      contactTelegram: '+380984536052',
+      contactWhatsapp: '+380984536052' 
     };
 
     try {
