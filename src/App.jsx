@@ -20,23 +20,44 @@ import {
   Phone,
   HelpCircle,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Image as ImageIcon
 } from 'lucide-react';
 
-/* STREAMING_CHUNK: Defining global configuration and defaults... */
 // ==========================================
 // ⚠️ КОНФІГУРАЦІЯ ГЛОБАЛЬНОЇ БАЗИ ДАНИХ (ДЛЯ КЛІЄНТІВ)
 // ==========================================
-// 100% правильний ID вашого файлу з великою літерою "O"
-const PUBLIC_FILE_ID = "1oeYMXv0TPKbdSk2OaplwfwUarb5fstTc"; 
-
-// Публічний API-ключ для безпроблемного зчитування даних без авторизації
+const PUBLIC_FILE_ID = "1hFqJw14-7LUDBXcIzqzJIvC-O3yzhCCT"; 
 const PUBLIC_API_KEY = "AIzaSyCczGkh9GrG0phiQP6e_yi44IiZVyEEANo";
-
-// Секретний пароль для входу в режим адміністратора
 const ADMIN_PASSWORD = "1234"; 
 
-// Початкові демонстраційні дані товарів (використовуються як резервна копія при першому старті)
+// Автоматичний конвертер посилань з Google Диску та інших хмар у прямі фото
+const formatImageUrl = (url) => {
+  if (!url) return 'https://images.unsplash.com/photo-1602491453979-53a99888ecf1?auto=format&fit=crop&q=80&w=600';
+  let cleanUrl = url.trim();
+  
+  // Конвертація посилань Google Диску виду:
+  // https://drive.google.com/file/d/FILE_ID/view?usp=sharing
+  const gdriveFileMatch = cleanUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (gdriveFileMatch && gdriveFileMatch[1]) {
+    return `https://lh3.googleusercontent.com/d/${gdriveFileMatch[1]}`;
+  }
+  
+  // Конвертація посилань Google Диску виду:
+  // https://drive.google.com/open?id=FILE_ID або ?id=FILE_ID
+  const gdriveIdMatch = cleanUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if ((cleanUrl.includes('drive.google.com') || cleanUrl.includes('docs.google.com')) && gdriveIdMatch && gdriveIdMatch[1]) {
+    return `https://lh3.googleusercontent.com/d/${gdriveIdMatch[1]}`;
+  }
+  
+  // Конвертація посилань Dropbox
+  if (cleanUrl.includes('dropbox.com')) {
+    return cleanUrl.replace('www.dropbox.com', 'dl.dropboxusercontent.com').replace('?dl=0', '');
+  }
+
+  return cleanUrl;
+};
+
 const INITIAL_PRODUCTS = [
   {
     id: 'p1',
@@ -89,24 +110,15 @@ const INITIAL_PRODUCTS = [
 ];
 
 export default function App() {
-  /* STREAMING_CHUNK: Initializing React state variables... */
-  const [isAdmin, setIsAdmin] = useState(() => {
-    return localStorage.getItem('meat_store_is_admin') === 'true';
-  });
+  const [isAdmin, setIsAdmin] = useState(() => localStorage.getItem('meat_store_is_admin') === 'true');
   const [isEditorMode, setIsEditorMode] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [loginError, setLoginError] = useState(false);
 
-  // Стан оформленого замовлення для показу клієнту
   const [lastPlacedOrder, setLastPlacedOrder] = useState(null);
+  const [lastLocalUpdate, setLastLocalUpdate] = useState(() => localStorage.getItem('meat_store_last_local_update') || new Date().toISOString());
 
-  // Стан відстеження останнього локального оновлення для вирішення конфліктів
-  const [lastLocalUpdate, setLastLocalUpdate] = useState(() => {
-    return localStorage.getItem('meat_store_last_local_update') || new Date().toISOString();
-  });
-
-  // Стан даних магазину (з автоматичною перевіркою валідності збережених даних)
   const [products, setProducts] = useState(() => {
     try {
       const saved = localStorage.getItem('meat_store_products');
@@ -117,7 +129,7 @@ export default function App() {
         }
       }
     } catch (e) {
-      console.error("Пошкоджений локальний кеш товарів, скидаємо на дефолт.");
+      console.error("Пошкоджений кеш товарів, скидаємо.");
     }
     return INITIAL_PRODUCTS;
   });
@@ -130,7 +142,7 @@ export default function App() {
         if (Array.isArray(parsed)) return parsed;
       }
     } catch (e) {
-      console.error("Пошкоджений локальний кеш замовлень, очищуємо.");
+      console.error("Пошкоджений кеш замовлень.");
     }
     return [];
   });
@@ -158,7 +170,7 @@ export default function App() {
         }
       }
     } catch (e) {
-      console.error("Пошкоджені налаштування сайту, відновлюємо базові.");
+      console.error("Пошкоджені налаштування, відновлюємо базові.");
     }
     return defaultSettings;
   });
@@ -170,19 +182,15 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [toast, setToast] = useState(null);
   
-  // Джерело бази даних для відображення статусу
-  const [dbSource, setDbSource] = useState('local'); // 'local' | 'gdrive'
+  const [dbSource, setDbSource] = useState('local');
   const [showContactMenu, setShowContactMenu] = useState(false);
 
-  // Стан для інтерактивного вікна діагностики бази даних
   const [dbLogs, setDbLogs] = useState([]);
   const [showDbDiagnostics, setShowDbDiagnostics] = useState(false);
   const [isPrivateError, setIsPrivateError] = useState(false);
-
-  // Стан для нового модального вікна вирішення конфліктів синхронізації
   const [syncConflict, setSyncConflict] = useState(null);
+  const [previewImageError, setPreviewImageError] = useState(false);
 
-  // --- СТАН GOOGLE DRIVE ІНТЕГРАЦІЇ ---
   const [gdriveConfig, setGdriveConfig] = useState(() => {
     const saved = localStorage.getItem('meat_store_gdrive_config');
     return saved ? JSON.parse(saved) : {
@@ -196,7 +204,6 @@ export default function App() {
 
   const [isSyncing, setIsSyncing] = useState(false);
 
-  /* STREAMING_CHUNK: Defining form templates... */
   const [editingProduct, setEditingProduct] = useState(null);
   const [productForm, setProductForm] = useState({
     name: '',
@@ -219,7 +226,6 @@ export default function App() {
     comment: ''
   });
 
-  /* STREAMING_CHUNK: Configuring local storage synchronization... */
   const markLocalUpdate = () => {
     const now = new Date().toISOString();
     setLastLocalUpdate(now);
@@ -262,19 +268,14 @@ export default function App() {
     return `https://wa.me/${clean}`;
   };
 
-  /* STREAMING_CHUNK: Fetching public database via direct Google API or CORS proxies... */
   const fetchPublicDatabase = async () => {
     const cleanId = PUBLIC_FILE_ID.trim();
-    if (!cleanId || cleanId === '') {
-      setDbLogs(["Лог: ID хмарного файлу Google Drive порожній."]);
-      return;
-    }
+    if (!cleanId) return;
     
     let tempLogs = [`Початок завантаження бази даних для ID: ${cleanId} о ${new Date().toLocaleTimeString()}`];
     let loadedSuccessfully = false;
     let fileIsPrivate = false;
 
-    // Спроба 1: Пряма спроба завантаження без проксі через офіційний Google API
     if (PUBLIC_API_KEY && PUBLIC_API_KEY.trim() !== "") {
       const apiKeyUrl = `https://www.googleapis.com/drive/v3/files/${cleanId}?alt=media&key=${PUBLIC_API_KEY.trim()}`;
       try {
@@ -288,8 +289,8 @@ export default function App() {
         if (response.ok) {
           const text = await response.text();
           const trimmed = text.trim();
-          
           let data = null;
+
           if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
             data = JSON.parse(trimmed);
           }
@@ -299,81 +300,47 @@ export default function App() {
             if (data.siteSettings) setSiteSettings(data.siteSettings);
             if (data.orders) setOrders(data.orders);
             
-            tempLogs.push(`[Прямий Google API] УСПІХ! Базу даних завантажено напряму з Google Cloud.`);
+            tempLogs.push(`[Прямий Google API] УСПІХ! Базу завантажено.`);
             loadedSuccessfully = true;
             setDbSource('gdrive');
             setIsPrivateError(false);
           }
         } else {
-          tempLogs.push(`[Прямий Google API] Помилка відповіді: ${response.status}`);
-          if (response.status === 403 || response.status === 404) {
-            fileIsPrivate = true;
-          }
+          tempLogs.push(`[Прямий Google API] Помилка: ${response.status}`);
+          if (response.status === 403 || response.status === 404) fileIsPrivate = true;
         }
       } catch (e) {
-        tempLogs.push(`[Прямий Google API] Помилка підключення: ${e.message}`);
+        tempLogs.push(`[Прямий Google API] Помилка: ${e.message}`);
       }
     }
 
-    // Спроба 2: Резервні CORS-проксі, якщо прямий запит заблоковано браузером
     if (!loadedSuccessfully) {
       const driveUrls = [
         `https://docs.google.com/uc?export=download&id=${cleanId}`,
-        `https://drive.usercontent.com/download?id=${cleanId}&export=download`,
-        `https://drive.google.com/uc?export=download&id=${cleanId}`
+        `https://drive.usercontent.com/download?id=${cleanId}&export=download`
       ];
-      
       const proxies = [
         { name: 'Codetabs Proxy', fn: (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}&_cb=${Date.now()}` },
-        { name: 'AllOrigins Raw', fn: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}&_cb=${Date.now()}` },
-        { name: 'Corsproxy.io', fn: (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}&_cb=${Date.now()}` }
+        { name: 'AllOrigins Raw', fn: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}&_cb=${Date.now()}` }
       ];
 
       for (const proxy of proxies) {
         for (const baseUrl of driveUrls) {
           try {
-            const targetUrl = proxy.fn(baseUrl);
-            tempLogs.push(`[${proxy.name}] Спроба резервного запиту...`);
-            
+            tempLogs.push(`[${proxy.name}] Запит...`);
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-            const response = await fetch(targetUrl, { signal: controller.signal });
+            const response = await fetch(proxy.fn(baseUrl), { signal: controller.signal });
             clearTimeout(timeoutId);
             
             if (response.ok) {
               const text = await response.text();
               const trimmed = text.trim();
-              
               let data = null;
 
               if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-                try {
-                  data = JSON.parse(trimmed);
-                } catch (jsonErr) {
-                  tempLogs.push(`[${proxy.name}] Помилка розбору JSON: ${jsonErr.message}`);
-                }
-              } 
-              
-              if (!data) {
-                try {
-                  const wrapped = JSON.parse(trimmed);
-                  if (wrapped && wrapped.contents) {
-                    const innerTrimmed = wrapped.contents.trim();
-                    if (innerTrimmed.startsWith('{') || innerTrimmed.startsWith('[')) {
-                      data = JSON.parse(innerTrimmed);
-                    } else if (innerTrimmed.includes('<!DOCTYPE') || innerTrimmed.includes('<html') || innerTrimmed.includes('ServiceLogin') || innerTrimmed.includes('sign-in')) {
-                      fileIsPrivate = true;
-                    }
-                  }
-                } catch (e) {
-                  // Ignore
-                }
-              }
-
-              if (!data && (trimmed.includes('<!DOCTYPE') || trimmed.includes('<html') || trimmed.includes('ServiceLogin') || trimmed.includes('sign-in') || trimmed.includes('google-signin'))) {
-                fileIsPrivate = true;
-                tempLogs.push(`[${proxy.name}] Google Drive повернув сторінку входу. Файл є приватним!`);
+                try { data = JSON.parse(trimmed); } catch (e) {}
               }
 
               if (data && data.products && data.products.length > 0) {
@@ -381,14 +348,12 @@ export default function App() {
                 if (data.siteSettings) setSiteSettings(data.siteSettings);
                 if (data.orders) setOrders(data.orders);
                 
-                tempLogs.push(`[${proxy.name}] УСПІХ! Хмарну базу завантажено через резервний проксі-канал.`);
+                tempLogs.push(`[${proxy.name}] УСПІХ!`);
                 loadedSuccessfully = true;
                 setDbSource('gdrive');
                 setIsPrivateError(false);
                 break; 
               }
-            } else {
-              tempLogs.push(`[${proxy.name}] Помилка сервера: ${response.status}`);
             }
           } catch (e) {
             tempLogs.push(`[${proxy.name}] Не вдалося: ${e.message}`);
@@ -399,27 +364,14 @@ export default function App() {
     }
 
     setDbLogs(tempLogs);
-
     if (!loadedSuccessfully) {
       setDbSource('local');
-      if (fileIsPrivate) {
-        setIsPrivateError(true);
-        if (isAdmin) {
-          showToast("Файл приватний! Будь ласка, відкрийте публічний доступ на Google Диску.", "error");
-        }
-      } else {
-        if (isAdmin) {
-          showToast("Працюємо на резервній локальній копії (Google Drive недоступний).", "info");
-        }
-      }
+      if (fileIsPrivate) setIsPrivateError(true);
     }
   };
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchPublicDatabase();
-    }, 600);
-
+    const timer = setTimeout(() => fetchPublicDatabase(), 600);
     return () => clearTimeout(timer);
   }, []);
 
@@ -442,14 +394,6 @@ export default function App() {
       setPasswordInput('');
       setLoginError(false);
       showToast('Доступ адміністратора успішно активовано!', 'success');
-      
-      if (!window.google) {
-        const script = document.createElement('script');
-        script.src = 'https://accounts.google.com/gsi/client';
-        script.async = true;
-        script.defer = true;
-        document.body.appendChild(script);
-      }
     } else {
       setLoginError(true);
       setPasswordInput('');
@@ -479,53 +423,38 @@ export default function App() {
             showToast(`Помилка Google: ${response.error}`, 'error');
             return;
           }
-          
-          const newConfig = {
-            ...gdriveConfig,
-            accessToken: response.access_token,
-            isConnected: true
-          };
+          const newConfig = { ...gdriveConfig, accessToken: response.access_token, isConnected: true };
           setGdriveConfig(newConfig);
           showToast('Підключено до Google акаунту!', 'success');
-          
           syncWithGoogleDrive(response.access_token, newConfig, null, true);
         },
       });
       client.requestAccessToken();
     } catch (err) {
-      showToast(`Помилка ініціалізації клієнта Google: ${err.message}`, 'error');
+      showToast(`Помилка ініціалізації: ${err.message}`, 'error');
     }
   };
 
-  /* STREAMING_CHUNK: Designing sync options with smart conflict resolution... */
   const forceUploadToCloud = async (passedToken, passedConfig, payload) => {
     const token = passedToken || gdriveConfig.accessToken;
     const fileId = passedConfig?.fileId || gdriveConfig.fileId;
     if (!token || !fileId) return;
 
     setIsSyncing(true);
-    const headers = {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    };
-
     try {
       const updateUrl = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`;
       const updateRes = await fetch(updateUrl, {
         method: 'PATCH',
-        headers,
-        body: JSON.stringify({
-          ...payload,
-          lastUpdated: new Date().toISOString()
-        })
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ ...payload, lastUpdated: new Date().toISOString() })
       });
 
       if (updateRes.ok) {
-        showToast('Дані успішно завантажено та збережено у хмарі!', 'success');
-        setGdriveConfig(prev => ({
-          ...prev,
-          lastSync: new Date().toLocaleString()
-        }));
+        showToast('Дані успішно збережено у хмарі!', 'success');
+        setGdriveConfig(prev => ({ ...prev, lastSync: new Date().toLocaleString() }));
       } else {
         throw new Error('Помилка сервера Google');
       }
@@ -540,7 +469,7 @@ export default function App() {
     if (driveData.products) setProducts(driveData.products);
     if (driveData.orders) setOrders(driveData.orders);
     if (driveData.siteSettings) setSiteSettings(driveData.siteSettings);
-    showToast('Дані успішно оновлено з хмари Google Drive!', 'success');
+    showToast('Дані оновлено з хмари Google Drive!', 'success');
     setSyncConflict(null);
   };
 
@@ -555,10 +484,7 @@ export default function App() {
     }
 
     setIsSyncing(true);
-    const headers = {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    };
+    const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
 
     try {
       let fileId = currentConfig.fileId;
@@ -567,82 +493,59 @@ export default function App() {
         const searchUrl = `https://www.googleapis.com/drive/v3/files?q=name='meat_store_db.json' and trashed=false&fields=files(id, name)`;
         const searchRes = await fetch(searchUrl, { headers });
         const searchData = await searchRes.json();
-
         if (searchData.files && searchData.files.length > 0) {
           fileId = searchData.files[0].id;
         }
       }
 
       const dbPayload = {
-        products: products,
-        orders: orders,
+        products,
+        orders,
         siteSettings: settingsToSync,
         lastUpdated: new Date().toISOString()
       };
 
       if (fileId) {
-        // Контроль розбіжностей: Перевіряємо наявність конфлікту перед перезаписом
         if (checkConflict) {
           try {
-            const getUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
-            const getRes = await fetch(getUrl, { headers });
+            const getRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { headers });
             if (getRes.ok) {
               const driveData = await getRes.json();
               if (driveData && driveData.lastUpdated) {
-                // Визначаємо наявність розбіжностей у версіях
                 const isDifferent = JSON.stringify(driveData.products) !== JSON.stringify(products) ||
                                     JSON.stringify(driveData.siteSettings) !== JSON.stringify(settingsToSync);
-                
                 if (isDifferent) {
-                  setSyncConflict({
-                    cloud: driveData,
-                    local: dbPayload,
-                    token,
-                    config: { ...currentConfig, fileId }
-                  });
+                  setSyncConflict({ cloud: driveData, local: dbPayload, token, config: { ...currentConfig, fileId } });
                   setIsSyncing(false);
-                  return; // Зупиняємо прямий перезапис, даємо користувачу вибір
+                  return;
                 }
               }
             }
           } catch (err) {
-            console.warn("Не вдалося завантажити хмару для аналізу конфліктів, продовжуємо прямий запис.");
+            console.warn("Помилка перевірки конфліктів, продовжуємо прямий запис.");
           }
         }
 
-        const updateUrl = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`;
-        const updateRes = await fetch(updateUrl, {
+        const updateRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
           method: 'PATCH',
-          headers: {
-            ...headers,
-            'Content-Type': 'application/json'
-          },
+          headers,
           body: JSON.stringify(dbPayload)
         });
 
         if (updateRes.ok) {
-          showToast('Базу даних успішно оновлено на Google Диску!', 'success');
+          showToast('Базу даних оновлено на Google Диску!', 'success');
         } else {
           throw new Error('Помилка оновлення файлу');
         }
       } else {
-        const metadata = {
-          name: 'meat_store_db.json',
-          mimeType: 'application/json'
-        };
-
+        const metadata = { name: 'meat_store_db.json', mimeType: 'application/json' };
         const boundary = 'foo_bar_baz_meat';
         const delimiter = `\r\n--${boundary}\r\n`;
         const closeDelimiter = `\r\n--${boundary}--`;
 
         const multipartBody = 
-          delimiter +
-          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-          JSON.stringify(metadata) +
-          delimiter +
-          'Content-Type: application/json\r\n\r\n' +
-          JSON.stringify(dbPayload) +
-          closeDelimiter;
+          delimiter + 'Content-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(metadata) +
+          delimiter + 'Content-Type: application/json\r\n\r\n' + JSON.stringify(dbPayload) + closeDelimiter;
 
         const createRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
           method: 'POST',
@@ -656,19 +559,13 @@ export default function App() {
         if (createRes.ok) {
           const createdFile = await createRes.json();
           fileId = createdFile.id;
-          showToast('На вашому Google Диску успішно створено файл "meat_store_db.json"!', 'success');
+          showToast('Створено файл "meat_store_db.json" на Google Диску!', 'success');
         } else {
-          const errData = await createRes.json();
-          throw new Error(errData.error?.message || 'Помилка створення файлу');
+          throw new Error('Помилка створення файлу');
         }
       }
 
-      setGdriveConfig(prev => ({
-        ...prev,
-        fileId,
-        lastSync: new Date().toLocaleString()
-      }));
-
+      setGdriveConfig(prev => ({ ...prev, fileId, lastSync: new Date().toLocaleString() }));
     } catch (err) {
       showToast(`Помилка синхронізації: ${err.message}`, 'error');
       setGdriveConfig(prev => ({ ...prev, isConnected: false }));
@@ -678,20 +575,12 @@ export default function App() {
   };
 
   const disconnectGdrive = () => {
-    setGdriveConfig(prev => ({
-      ...prev,
-      accessToken: '',
-      isConnected: false,
-      lastSync: null
-    }));
-    showToast('Локальний зв\'язок з Google Drive розірвано.', 'info');
+    setGdriveConfig(prev => ({ ...prev, accessToken: '', isConnected: false, lastSync: null }));
+    showToast('Зв\'язок з Google Drive розірвано.', 'info');
   };
 
   const handleTextChange = (key, newValue) => {
-    setSiteSettings(prev => ({
-      ...prev,
-      [key]: newValue
-    }));
+    setSiteSettings(prev => ({ ...prev, [key]: newValue }));
     markLocalUpdate();
   };
 
@@ -699,17 +588,12 @@ export default function App() {
     const updatedSettings = { ...siteSettings };
     localStorage.setItem('meat_store_settings', JSON.stringify(updatedSettings));
     markLocalUpdate();
-    
-    showToast("Контакти успішно збережено локально! Записуємо зміни на Google Диск...", "success");
-    
+    showToast("Контакти збережено! Записуємо в хмару...", "success");
     if (gdriveConfig.isConnected) {
       syncWithGoogleDrive(null, null, updatedSettings, false);
-    } else {
-      showToast("Контакти збережено локально. Увійдіть у Google Drive для запису в хмару!", "info");
     }
   };
 
-  /* STREAMING_CHUNK: Managing products forms... */
   const handleSaveProduct = (e) => {
     e.preventDefault();
     if (!productForm.name || !productForm.price) {
@@ -717,6 +601,7 @@ export default function App() {
       return;
     }
 
+    const formattedImage = formatImageUrl(productForm.image);
     const priceNum = parseFloat(productForm.price);
     const stepNum = parseFloat(productForm.weightStep);
     const minNum = parseFloat(productForm.minWeight);
@@ -728,7 +613,7 @@ export default function App() {
       price: isNaN(priceNum) ? 0 : priceNum,
       unit: productForm.unit,
       description: productForm.description,
-      image: productForm.image || 'https://images.unsplash.com/photo-1602491453979-53a99888ecf1?auto=format&fit=crop&q=80&w=600',
+      image: formattedImage,
       available: productForm.available,
       weightStep: isNaN(stepNum) ? 0.1 : stepNum,
       minWeight: isNaN(minNum) ? 0.2 : minNum
@@ -742,21 +627,15 @@ export default function App() {
     } else {
       updatedProducts = [...products, productData];
       setProducts(updatedProducts);
-      showToast('Новий товар успішно додано до каталогу!');
+      showToast('Новий товар додано до каталогу!');
     }
 
     markLocalUpdate();
     setEditingProduct(null);
+    setPreviewImageError(false);
     setProductForm({
-      name: '',
-      category: 'sausages',
-      price: '',
-      unit: 'кг',
-      description: '',
-      image: '',
-      available: true,
-      weightStep: 0.1,
-      minWeight: 0.2
+      name: '', category: 'sausages', price: '', unit: 'кг',
+      description: '', image: '', available: true, weightStep: 0.1, minWeight: 0.2
     });
 
     if (gdriveConfig.isConnected) {
@@ -766,6 +645,7 @@ export default function App() {
 
   const handleEditProduct = (product) => {
     setEditingProduct(product);
+    setPreviewImageError(false);
     setProductForm({
       name: product.name,
       category: product.category,
@@ -780,12 +660,10 @@ export default function App() {
   };
 
   const handleDeleteProduct = (productId) => {
-    // Безпечне кастомне вікно замість confirm
     const updated = products.filter(p => p.id !== productId);
     setProducts(updated);
     markLocalUpdate();
     showToast('Товар видалено.', 'info');
-    
     if (gdriveConfig.isConnected) {
       setTimeout(() => syncWithGoogleDrive(), 500);
     }
@@ -813,9 +691,7 @@ export default function App() {
       showToast('Товар видалено з кошика', 'info');
       return;
     }
-    setCart(cart.map(item => 
-      item.id === productId ? { ...item, quantity: parseFloat(newQty.toFixed(2)) } : item
-    ));
+    setCart(cart.map(item => item.id === productId ? { ...item, quantity: parseFloat(newQty.toFixed(2)) } : item));
   };
 
   const removeFromCart = (productId) => {
@@ -823,11 +699,8 @@ export default function App() {
     showToast('Товар видалено з кошика', 'info');
   };
 
-  const getCartTotal = () => {
-    return cart.reduce((total, item) => total + (item.price * item.quantity), 0);
-  };
+  const getCartTotal = () => cart.reduce((total, item) => total + (item.price * item.quantity), 0);
 
-  /* STREAMING_CHUNK: Handling orders placements... */
   const handlePlaceOrder = (e) => {
     e.preventDefault();
     if (cart.length === 0) {
@@ -851,38 +724,20 @@ export default function App() {
     const updatedOrders = [newOrder, ...orders];
     setOrders(updatedOrders);
     markLocalUpdate();
-    
     setLastPlacedOrder(newOrder);
     setCart([]);
-    showToast(`Замовлення ${newOrder.id} успішно створено!`, 'success');
+    showToast(`Замовлення ${newOrder.id} створено!`, 'success');
     setActiveTab('shop');
-    
-    setCheckoutForm({
-      name: '',
-      phone: '',
-      address: '',
-      deliveryType: 'pickup',
-      paymentType: 'cash',
-      comment: ''
-    });
+    setCheckoutForm({ name: '', phone: '', address: '', deliveryType: 'pickup', paymentType: 'cash', comment: '' });
 
     if (gdriveConfig.isConnected) {
       setTimeout(() => {
         setIsSyncing(true);
-        const headers = {
-          'Authorization': `Bearer ${gdriveConfig.accessToken}`,
-          'Content-Type': 'application/json'
-        };
-        const dbPayload = {
-          products: products,
-          orders: updatedOrders,
-          siteSettings: siteSettings,
-          lastUpdated: new Date().toISOString()
-        };
+        const headers = { 'Authorization': `Bearer ${gdriveConfig.accessToken}`, 'Content-Type': 'application/json' };
         fetch(`https://www.googleapis.com/upload/drive/v3/files/${gdriveConfig.fileId}?uploadType=media`, {
           method: 'PATCH',
           headers,
-          body: JSON.stringify(dbPayload)
+          body: JSON.stringify({ products, orders: updatedOrders, siteSettings, lastUpdated: new Date().toISOString() })
         }).then(() => {
           setIsSyncing(false);
           setGdriveConfig(prev => ({ ...prev, lastSync: new Date().toLocaleString() }));
@@ -895,7 +750,7 @@ export default function App() {
     const updated = orders.map(ord => ord.id === orderId ? { ...ord, status: newStatus } : ord);
     setOrders(updated);
     markLocalUpdate();
-    showToast(`Статус замовлення ${orderId} успішно змінено!`);
+    showToast(`Статус замовлення ${orderId} змінено!`);
 
     if (gdriveConfig.isConnected) {
       setTimeout(() => {
@@ -933,7 +788,7 @@ export default function App() {
            `💳 *Оплата:* ${order.customer.paymentType === 'cash' ? 'Готівка' : 'Термінал'}\n` +
            `💬 *Коментар:* ${order.customer.comment}\n\n` +
            `*Замовлені делікатеси:*\n${itemsText}\n\n` +
-           `💰 *Загальна сума до сплати:* *${order.total.toFixed(2)} грн*`;
+           `💰 *Загальна сума:* *${order.total.toFixed(2)} грн*`;
   };
 
   const getCategoryName = (catId) => {
@@ -949,20 +804,13 @@ export default function App() {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans antialiased pb-20 selection:bg-red-800 selection:text-white">
       
-      {/* Глобальне приховування смуг прокручування для уникнення зсувів макету */}
       <style>{`
-        .scrollbar-none::-webkit-scrollbar {
-          display: none;
-        }
-        .scrollbar-none {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-        }
+        .scrollbar-none::-webkit-scrollbar { display: none; }
+        .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
 
-      {/* Тост-сповіщення */}
       {toast && (
-        <div className={`fixed top-4 right-4 z-50 p-4 rounded-xl shadow-2xl transition-all duration-300 transform translate-y-0 flex items-center gap-3 border ${
+        <div className={`fixed top-4 right-4 z-50 p-4 rounded-xl shadow-2xl transition-all duration-300 flex items-center gap-3 border ${
           toast.type === 'error' ? 'bg-red-950/90 border-red-800 text-red-200' :
           toast.type === 'info' ? 'bg-zinc-900 border-zinc-700 text-zinc-200' :
           'bg-zinc-900/90 border-amber-500/30 text-amber-200'
@@ -972,7 +820,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ⚠️ ВЕРХНЯ ПАНЕЛЬ АДМІНА */}
+      {/* ВЕРХНЯ ПАНЕЛЬ АДМІНА */}
       {isAdmin && (
         <div className="bg-zinc-900 border-b border-zinc-800 py-2.5 px-4 text-xs font-mono">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-3">
@@ -982,7 +830,7 @@ export default function App() {
               <span>|</span>
               <span className="text-zinc-500">База на Gmail:</span>
               <span className={gdriveConfig.isConnected ? 'text-emerald-400' : 'text-amber-500'}>
-                {gdriveConfig.isConnected ? 'СИНХРОНІЗОВАНО З GOOGLE ДИСКОМ' : 'ЛОКАЛЬНИЙ РЕЖИМ (LocalStorage)'}
+                {gdriveConfig.isConnected ? 'СИНХРОНІЗОВАНО З GOOGLE ДИСКОМ' : 'ЛОКАЛЬНИЙ РЕЖИМ'}
               </span>
             </div>
 
@@ -990,9 +838,7 @@ export default function App() {
               <button 
                 onClick={() => setIsEditorMode(!isEditorMode)}
                 className={`px-3 py-1 rounded-md font-bold transition-all flex items-center gap-1.5 ${
-                  isEditorMode 
-                    ? 'bg-amber-500 text-zinc-950 shadow-md' 
-                    : 'bg-zinc-800 text-zinc-400 hover:text-white'
+                  isEditorMode ? 'bg-amber-500 text-zinc-950 shadow-md' : 'bg-zinc-800 text-zinc-400 hover:text-white'
                 }`}
               >
                 <Edit3 className="w-3.5 h-3.5" />
@@ -1010,36 +856,21 @@ export default function App() {
                 </button>
               )}
 
-              <button 
-                onClick={handleAdminLogout}
-                className="text-red-400 hover:text-red-300 font-bold"
-              >
-                [ Вийти з адмінки ]
+              <button onClick={handleAdminLogout} className="text-red-400 hover:text-red-300 font-bold">
+                [ Вийти ]
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* --- ШАПКА МАГАЗИНУ --- */}
+      {/* ШАПКА МАГАЗИНУ */}
       <header className="sticky top-0 z-40 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-900 shadow-lg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-20">
-            
-            {/* Логотип */}
             <div className="flex items-center gap-3.5 cursor-pointer" onClick={() => setActiveTab('shop')}>
               <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-red-700 to-amber-600 flex items-center justify-center text-white shadow-md shadow-red-950/30">
-                {isEditorMode ? (
-                  <input
-                    type="text"
-                    maxLength={1}
-                    value="М"
-                    disabled
-                    className="w-full text-center bg-transparent font-serif text-2xl font-black focus:outline-none cursor-pointer"
-                  />
-                ) : (
-                  <span className="font-serif text-2xl font-black">М</span>
-                )}
+                <span className="font-serif text-2xl font-black">М</span>
               </div>
               <div>
                 {isEditorMode ? (
@@ -1064,11 +895,10 @@ export default function App() {
                   <p className="text-xs text-amber-500/90 font-medium tracking-wide">{siteSettings.subtitle}</p>
                 )}
 
-                {/* База Статус (Натискання відкриває вікно детальної діагностики) */}
                 <div 
                   className="flex items-center gap-1.5 mt-1 cursor-pointer select-none group" 
                   onClick={() => setShowDbDiagnostics(true)}
-                  title="Клацніть для перевірки з'єднання з базою"
+                  title="Клацніть для перевірки з'єднання"
                 >
                   <span className={`w-1.5 h-1.5 rounded-full ${dbSource === 'gdrive' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
                   <span className="text-[9px] text-zinc-500 group-hover:text-zinc-300 transition-colors uppercase tracking-widest font-black flex items-center gap-1">
@@ -1079,7 +909,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Навігація */}
             <nav className="hidden md:flex items-center gap-1.5 bg-zinc-900/50 p-1 rounded-xl border border-zinc-900">
               <button 
                 onClick={() => setActiveTab('shop')}
@@ -1091,7 +920,7 @@ export default function App() {
                 onClick={() => setActiveTab('cart')}
                 className={`px-5 py-2.5 rounded-lg text-xs font-bold transition-all tracking-wider flex items-center gap-2 ${activeTab === 'cart' ? 'bg-gradient-to-r from-red-800 to-amber-700 text-white shadow' : 'text-zinc-400 hover:text-white'}`}
               >
-                Кошик замовлення
+                Кошик
                 {cart.length > 0 && (
                   <span className="bg-white text-zinc-950 font-black text-[10px] px-2 py-0.5 rounded-full">
                     {cart.length}
@@ -1121,7 +950,6 @@ export default function App() {
                 )}
               </button>
             </div>
-
           </div>
         </div>
       </header>
@@ -1160,10 +988,9 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
         
-        {/* ВКЛАДКА 1: ВІТРИНА */}
+        {/* ВІТРИНА */}
         {activeTab === 'shop' && (
           <div>
-            {/* */}
             <div className="relative rounded-3xl overflow-hidden mb-10 bg-gradient-to-r from-zinc-950 via-zinc-900 to-red-950 border border-zinc-900 p-8 sm:p-12 flex flex-col justify-center min-h-[280px] shadow-2xl">
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(185,28,28,0.12),transparent_40%)]" />
               <div className="relative z-10 max-w-2xl">
@@ -1237,7 +1064,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* */}
             <div className="flex flex-col lg:flex-row gap-4 justify-between items-stretch lg:items-center mb-8">
               <div className="relative flex-1 max-w-lg">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
@@ -1252,7 +1078,6 @@ export default function App() {
                 />
               </div>
 
-              {/* Рядок категорій із фіксованою висотою, щоб уникнути зсувів CLS та прихованим смугами прокрутки */}
               <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none h-[48px] max-w-full font-sans text-xs">
                 {[
                   { id: 'all', name: 'Усе меню' },
@@ -1276,7 +1101,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* */}
             {filteredProducts.length === 0 ? (
               <div className="text-center py-16 bg-zinc-900/30 rounded-3xl border border-dashed border-zinc-900">
                 <p className="text-zinc-500 text-lg mb-2">Нічого не знайдено за вашим запитом</p>
@@ -1286,15 +1110,16 @@ export default function App() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
                 {filteredProducts.map(product => {
                   const badgeText = getCategoryName(product.category);
+                  const displayImage = formatImageUrl(product.image);
+
                   return (
                     <div 
                       key={product.id}
                       className="group bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-900 hover:border-zinc-800 transition-all flex flex-col hover:scale-[1.01] shadow-xl hover:shadow-2xl"
                     >
-                      {/* */}
                       <div className="relative h-56 overflow-hidden bg-zinc-950">
                         <img 
-                          src={product.image} 
+                          src={displayImage} 
                           alt={product.name}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                           onError={(e) => {
@@ -1304,7 +1129,6 @@ export default function App() {
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent opacity-60" />
                         
-                        {/* Динамічна плашка категорії */}
                         {badgeText && (
                           <span className="absolute top-4 left-4 text-[10px] font-bold uppercase tracking-wider bg-zinc-950/95 text-amber-500 px-3 py-1.5 rounded-xl border border-zinc-850/80 shadow-md backdrop-blur-sm">
                             {badgeText}
@@ -1357,7 +1181,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ВКЛАДКА 2: КОШИК */}
+        {/* КОШИК */}
         {activeTab === 'cart' && (
           <div className="max-w-4xl mx-auto">
             <h2 className="text-3xl font-bold font-serif mb-8 text-white">Ваш Кошик</h2>
@@ -1375,8 +1199,6 @@ export default function App() {
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                
-                {/* */}
                 <div className="lg:col-span-7 space-y-4">
                   {cart.map(item => (
                     <div 
@@ -1384,7 +1206,7 @@ export default function App() {
                       className="bg-zinc-900 rounded-2xl p-4 border border-zinc-850 flex items-center gap-4 justify-between"
                     >
                       <img 
-                        src={item.image} 
+                        src={formatImageUrl(item.image)} 
                         alt={item.name} 
                         className="w-16 h-16 rounded-xl object-cover bg-zinc-950" 
                       />
@@ -1433,13 +1255,9 @@ export default function App() {
                         {getCartTotal().toFixed(2)} грн
                       </span>
                     </div>
-                    <p className="text-xs text-zinc-500 leading-relaxed">
-                      * Кінцева вага фасованих виробів може незначно коливатися у межах 50-100г. Менеджер узгодить фінальну вартість за телефоном.
-                    </p>
                   </div>
                 </div>
 
-                {/* */}
                 <div className="lg:col-span-5 bg-zinc-900 rounded-3xl p-6 border border-zinc-850">
                   <h3 className="text-xl font-bold font-serif text-white mb-6">Оформлення замовлення</h3>
                   
@@ -1557,19 +1375,18 @@ export default function App() {
                     </button>
                   </form>
                 </div>
-
               </div>
             )}
           </div>
         )}
 
-        {/* ВКЛАДКА 3: АДМІНКА */}
+        {/* АДМІНКА */}
         {activeTab === 'admin' && isAdmin && (
           <div>
             <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center mb-8 border-b border-zinc-900 pb-6">
               <div>
                 <h2 className="text-3xl font-bold font-serif text-white">Панель керування</h2>
-                <p className="text-xs text-zinc-400 mt-1">Оновлюйте асортимент та відстежуйте нові замовлення</p>
+                <p className="text-xs text-zinc-400 mt-1">Оновлюйте асортимент та відстежуйте замовлення</p>
               </div>
               
               <div className="flex gap-2 bg-zinc-900 p-1.5 rounded-xl border border-zinc-850 w-full sm:w-auto">
@@ -1599,19 +1416,18 @@ export default function App() {
                   }`}
                 >
                   <Database className="w-4 h-4" />
-                  Налаштування сайту & Google Drive
+                  Налаштування & Google Drive
                 </button>
               </div>
             </div>
 
-            {/* */}
+            {/* ВКЛАДКА ТОВАРІВ З ІНТЕРАКТИВНИМ ПРЕВ'Ю КАРТИНКИ */}
             {adminSubTab === 'products' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                
                 <div className="lg:col-span-5 bg-zinc-900 p-6 rounded-3xl border border-zinc-850 self-start">
                   <h3 className="text-lg font-bold font-serif mb-6 text-white flex items-center gap-2">
                     {editingProduct ? <Edit3 className="w-5 h-5 text-amber-500" /> : <Plus className="w-5 h-5 text-amber-500" />}
-                    {editingProduct ? 'Редагувати товар' : 'Додати товар'}
+                    {editingProduct ? 'Редагувати товар' : 'Додати новий товар'}
                   </h3>
 
                   <form onSubmit={handleSaveProduct} className="space-y-4">
@@ -1653,29 +1469,6 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-400 uppercase mb-2">Мін. вага/порція</label>
-                        <input
-                          type="number"
-                          step="0.05"
-                          value={productForm.minWeight}
-                          onChange={(e) => setProductForm({...productForm, minWeight: e.target.value})}
-                          className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-3 text-sm text-white focus:outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-400 uppercase mb-2">Крок ваги (+/-)</label>
-                        <input
-                          type="number"
-                          step="0.05"
-                          value={productForm.weightStep}
-                          onChange={(e) => setProductForm({...productForm, weightStep: e.target.value})}
-                          className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-3 text-sm text-white focus:outline-none"
-                        />
-                      </div>
-                    </div>
-
                     <div>
                       <label className="block text-xs font-semibold text-zinc-400 uppercase mb-2">Категорія</label>
                       <select
@@ -1690,15 +1483,56 @@ export default function App() {
                       </select>
                     </div>
 
+                    {/* Поле зображення з розумною обробкою посилань */}
                     <div>
-                      <label className="block text-xs font-semibold text-zinc-400 uppercase mb-2">Зображення (URL)</label>
+                      <label className="block text-xs font-semibold text-zinc-400 uppercase mb-2 flex items-center justify-between">
+                        <span>Посилання на фото (Google Drive чи веб-лінк)</span>
+                        <ImageIcon className="w-4 h-4 text-amber-500" />
+                      </label>
                       <input
                         type="url"
                         value={productForm.image}
-                        onChange={(e) => setProductForm({...productForm, image: e.target.value})}
+                        onChange={(e) => {
+                          setPreviewImageError(false);
+                          setProductForm({...productForm, image: e.target.value});
+                        }}
                         className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-3 text-sm text-white focus:outline-none"
-                        placeholder="https://images.unsplash.com/..."
+                        placeholder="Вставте посилання з Google Диску або Інтернету..."
                       />
+                      <p className="text-[10px] text-zinc-500 mt-1.5">
+                        💡 Можна просто вставити посилання «Поділитися» з вашого Google Диску. Сайт перетворить його автоматично!
+                      </p>
+
+                      {/* Попередній перегляд картинки в режимі реального часу */}
+                      {productForm.image && (
+                        <div className="mt-3 p-3 bg-zinc-950 border border-zinc-800 rounded-2xl flex items-center gap-3">
+                          <div className="relative w-16 h-16 rounded-xl overflow-hidden bg-zinc-900 shrink-0 border border-zinc-800">
+                            <img 
+                              src={formatImageUrl(productForm.image)} 
+                              alt="Попередній перегляд"
+                              className="w-full h-full object-cover"
+                              onError={() => setPreviewImageError(true)}
+                              onLoad={() => setPreviewImageError(false)}
+                            />
+                          </div>
+                          <div className="text-xs">
+                            {previewImageError ? (
+                              <span className="text-red-400 font-bold block flex items-center gap-1">
+                                <AlertTriangle className="w-3.5 h-3.5" /> Фото недоступне!
+                              </span>
+                            ) : (
+                              <span className="text-emerald-400 font-bold block flex items-center gap-1">
+                                <Check className="w-3.5 h-3.5" /> Фото розпізнано!
+                              </span>
+                            )}
+                            <span className="text-zinc-500 text-[10px] block mt-0.5">
+                              {previewImageError 
+                                ? 'Перевірте, чи відкритий доступ "Усі, хто мають посилання" на Google Диску.' 
+                                ? 'Зображення готове для відображення на вітрині.'}
+                            </span>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div>
@@ -1728,6 +1562,7 @@ export default function App() {
                           type="button"
                           onClick={() => {
                             setEditingProduct(null);
+                            setPreviewImageError(false);
                             setProductForm({
                               name: '', category: 'sausages', price: '', unit: 'кг',
                               description: '', image: '', available: true, weightStep: 0.1, minWeight: 0.2
@@ -1756,7 +1591,15 @@ export default function App() {
                     {products.map(p => (
                       <div key={p.id} className="p-4 flex items-center justify-between gap-4 hover:bg-zinc-850/50 transition-all">
                         <div className="flex items-center gap-3 min-w-0">
-                          <img src={p.image} alt={p.name} className="w-12 h-12 rounded-lg object-cover bg-zinc-950" />
+                          <img 
+                            src={formatImageUrl(p.image)} 
+                            alt={p.name} 
+                            className="w-12 h-12 rounded-lg object-cover bg-zinc-950"
+                            onError={(e) => {
+                              e.target.onerror = null;
+                              e.target.src = 'https://images.unsplash.com/photo-1602491453979-53a99888ecf1?auto=format&fit=crop&q=80&w=600';
+                            }}
+                          />
                           <div className="min-w-0">
                             <h4 className="font-bold text-sm text-zinc-100 truncate">{p.name}</h4>
                             <p className="text-xs text-amber-500 font-bold">{p.price} грн / {p.unit}</p>
@@ -1781,11 +1624,10 @@ export default function App() {
                     ))}
                   </div>
                 </div>
-
               </div>
             )}
 
-            {/* Суб-вкладка: ЗАМОВЛЕННЯ */}
+            {/* ВКЛАДКА ЗАМОВЛЕНЬ */}
             {adminSubTab === 'orders' && (
               <div className="space-y-6">
                 {orders.length === 0 ? (
@@ -1830,7 +1672,7 @@ export default function App() {
                         <div>
                           <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Доставка</span>
                           <p className="font-bold text-zinc-200">
-                            {order.customer.deliveryType === 'pickup' ? 'Самовивіз' : 'Адресна доставка (' + order.customer.address + ')'}
+                            {order.customer.deliveryType === 'pickup' ? 'Самовивіз' : 'Адресна (' + order.customer.address + ')'}
                           </p>
                         </div>
                         <div>
@@ -1855,7 +1697,7 @@ export default function App() {
 
                       {order.customer.comment && (
                         <div className="mb-6 p-3 bg-zinc-950 rounded-xl text-xs text-zinc-400 border-l-2 border-amber-500">
-                          <b>Примітка покупця:</b> {order.customer.comment}
+                          <b>Примітка:</b> {order.customer.comment}
                         </div>
                       )}
 
@@ -1882,10 +1724,9 @@ export default function App() {
               </div>
             )}
 
-            {/* */}
+            {/* ВКЛАДКА НАЛАШТУВАНЬ */}
             {adminSubTab === 'gdrive' && (
               <div className="max-w-3xl mx-auto space-y-8">
-                
                 <div className="bg-zinc-900 rounded-3xl p-8 border border-zinc-850 shadow-xl">
                   <h3 className="text-xl font-bold font-serif text-white mb-6 flex items-center gap-2">
                     <Phone className="w-5 h-5 text-amber-500" />
@@ -1900,29 +1741,29 @@ export default function App() {
                         value={siteSettings.contactPhone}
                         onChange={(e) => handleTextChange('contactPhone', e.target.value)}
                         className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-3 text-sm text-white focus:outline-none"
-                        placeholder="Наприклад: +380671234567"
+                        placeholder="+380671234567"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Telegram Username або Телефон (без @)</label>
+                      <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Telegram Username або Телефон</label>
                       <input
                         type="text"
                         value={siteSettings.contactTelegram}
                         onChange={(e) => handleTextChange('contactTelegram', e.target.value)}
                         className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-3 text-sm text-white focus:outline-none"
-                        placeholder="Наприклад: meat_craft_manager або +38067..."
+                        placeholder="meat_craft_manager або +38067..."
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Номер WhatsApp (лише цифри з кодом країни)</label>
+                      <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">Номер WhatsApp (лише цифри)</label>
                       <input
                         type="text"
                         value={siteSettings.contactWhatsapp}
                         onChange={(e) => handleTextChange('contactWhatsapp', e.target.value)}
                         className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-3 text-sm text-white focus:outline-none"
-                        placeholder="Наприклад: 380671234567"
+                        placeholder="380671234567"
                       />
                     </div>
 
@@ -1941,16 +1782,15 @@ export default function App() {
                       <Database className="w-8 h-8" />
                     </div>
                     <div>
-                      <h3 className="text-2xl font-bold font-serif text-white">Google Drive Світлина</h3>
-                      <p className="text-xs text-zinc-400">Зв'язок сайту з вашим Google акаунтом для безпечного збереження даних.</p>
+                      <h3 className="text-2xl font-bold font-serif text-white">Google Drive Хмара</h3>
+                      <p className="text-xs text-zinc-400">Збереження товарів та замовлень у вашому Google акаунті.</p>
                     </div>
                   </div>
 
-                  {/* Порівняльна діагностика конфігурації хмари */}
                   <div className="bg-zinc-950 p-5 rounded-2xl border border-zinc-850 mb-6 space-y-3 text-xs">
                     <h4 className="font-bold text-zinc-300 uppercase tracking-widest text-[10px] flex items-center gap-1.5">
                       <Info className="w-4 h-4 text-amber-500" />
-                      Порівняння конфігурацій баз даних (Для Адміна)
+                      Порівняння конфігурацій
                     </h4>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
@@ -1966,13 +1806,6 @@ export default function App() {
                         </code>
                       </div>
                     </div>
-
-                    {gdriveConfig.fileId && gdriveConfig.fileId !== PUBLIC_FILE_ID && (
-                      <div className="p-3 bg-amber-950/40 border border-amber-800 rounded-xl text-amber-200 mt-2 leading-relaxed">
-                        ⚠️ <b>УВАГА:</b> ID у файлі `App.jsx` на GitHub не збігається з вашим файлом на Диску! 
-                        Ваші клієнти не побачать змін, поки ви не вставите ID <code>{gdriveConfig.fileId}</code> у рядок №25 в GitHub.
-                      </div>
-                    )}
                   </div>
 
                   <div className="space-y-6">
@@ -1986,37 +1819,6 @@ export default function App() {
                           className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-3 text-sm text-white focus:outline-none"
                           placeholder="Вставте ваш Client ID..."
                         />
-                      </div>
-
-                      {/* Ручна прив'язка ID хмари (запобігання дублікатам) */}
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-1">
-                          Ручна прив'язка існуючого ID файлу
-                          <span className="text-zinc-500 font-normal normal-case">(якщо у вас вже є файл бази на Диску)</span>
-                        </label>
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            id="manualFileIdInput"
-                            placeholder="Вставте ID файлу бази даних..."
-                            className="flex-1 bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-3 text-sm text-white focus:outline-none"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const val = document.getElementById('manualFileIdInput').value.trim();
-                              if (val) {
-                                setGdriveConfig(prev => ({ ...prev, fileId: val }));
-                                showToast("Прив'язку існуючого файлу успішно виконано!", "success");
-                              } else {
-                                showToast("Введіть коректний ID файлу!", "error");
-                              }
-                            }}
-                            className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold px-4 rounded-xl text-xs transition-all border border-zinc-700"
-                          >
-                            Прив'язати
-                          </button>
-                        </div>
                       </div>
 
                       <div className="flex flex-col sm:flex-row gap-4 pt-2">
@@ -2048,36 +1850,12 @@ export default function App() {
                         )}
                       </div>
                     </div>
-
-                    <div className="pt-4 border-t border-zinc-850 flex flex-col gap-2 text-xs">
-                      <div className="flex justify-between">
-                        <span className="text-zinc-500">Статус зв'язку:</span>
-                        <span className={`font-bold ${gdriveConfig.isConnected ? 'text-emerald-400' : 'text-amber-500'}`}>
-                          {gdriveConfig.isConnected ? 'ПІДКЛЮЧЕНО (Дійсний 1 год.)' : 'АВТОНОМНИЙ'}
-                        </span>
-                      </div>
-                      {gdriveConfig.fileId && (
-                        <div className="flex justify-between">
-                          <span className="text-zinc-500">ID вашого файлу в хмарі:</span>
-                          <span className="text-zinc-300 font-mono select-all">{gdriveConfig.fileId}</span>
-                        </div>
-                      )}
-                      {gdriveConfig.lastSync && (
-                        <div className="flex justify-between">
-                          <span className="text-zinc-500">Остання синхронізація:</span>
-                          <span className="text-zinc-300">{gdriveConfig.lastSync}</span>
-                        </div>
-                      )}
-                    </div>
                   </div>
                 </div>
-
               </div>
             )}
-
           </div>
         )}
-
       </main>
 
       {/* ПЛАВАЮЧА КНОПКА ЗВ’ЯЗКУ */}
@@ -2120,14 +1898,14 @@ export default function App() {
         </button>
       </div>
 
-      {/* МОДАЛКА ЗАМОВЛЕННЯ */}
+      {/* МОДАЛКА ПІДТВЕРДЖЕННЯ ЗАМОВЛЕННЯ */}
       {lastPlacedOrder && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
           <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl w-full max-w-lg shadow-2xl relative">
             <h3 className="text-2xl font-bold text-white mb-2 font-serif text-center">Замовлення прийнято! 🥩</h3>
             <p className="text-xs text-center text-zinc-400 mb-6">
-              Ваше замовлення <b className="text-white">{lastPlacedOrder.id}</b> успішно додано в систему. 
-              Для миттєвого підтвердження ви можете надіслати копію замовлення у наш чат Telegram чи WhatsApp!
+              Ваше замовлення <b className="text-white">{lastPlacedOrder.id}</b> успішно додано. 
+              Ви можете надіслати копію замовлення у наш чат Telegram чи WhatsApp!
             </p>
 
             <div className="bg-zinc-950 p-4 rounded-xl text-xs text-zinc-400 max-h-48 overflow-y-auto mb-6 border border-zinc-850">
@@ -2168,72 +1946,27 @@ export default function App() {
         </div>
       )}
 
-      {/* --- ДІАГНОСТИКА БАЗИ ДАНИХ --- */}
+      {/* ДІАГНОСТИКА */}
       {showDbDiagnostics && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
           <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl w-full max-w-2xl shadow-2xl relative">
             <h3 className="text-xl font-bold text-white mb-2 font-serif flex items-center gap-2">
               <Database className="w-5 h-5 text-amber-500" />
-              Діагностика хмарної бази даних
+              Діагностика бази даних
             </h3>
-            <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
-              Ця панель аналізує підключення вашого магазину до хмари Google.
-            </p>
-
+            
             <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-850 font-mono text-[11px] leading-relaxed max-h-56 overflow-y-auto mb-6 text-zinc-300">
-              <div className="font-bold text-amber-500 mb-2">// Звіт про спробу підключення:</div>
+              <div className="font-bold text-amber-500 mb-2">// Звіт з'єднання:</div>
               {dbLogs.length === 0 ? (
-                <div className="text-zinc-500">Поки що запитів не було зроблено. Натисніть «Перевірити».</div>
+                <div className="text-zinc-500">Запитів ще не було.</div>
               ) : (
-                dbLogs.map((log, idx) => (
-                  <div key={idx} className="border-b border-zinc-900 pb-1.5 mb-1 last:border-0 last:pb-0">
-                    {log}
-                  </div>
-                ))
+                dbLogs.map((log, idx) => <div key={idx} className="border-b border-zinc-900 pb-1.5 mb-1 last:border-0">{log}</div>)
               )}
             </div>
 
-            {/* Автоматична делікатна підказка-помічник для виправлення OAuth Origin Mismatch */}
-            {isAdmin && (
-              <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 mb-6 text-xs text-zinc-300 space-y-2">
-                <h4 className="font-bold text-amber-500 uppercase tracking-widest text-[9px] flex items-center gap-1">
-                  <HelpCircle className="w-3.5 h-3.5" />
-                  Вирішення помилки "origin_mismatch" (Якщо не входить в акаунт):
-                </h4>
-                <p className="text-zinc-400 leading-relaxed">
-                  Google вимагає точного збігу доменів. Скопіюйте посилання нижче і додайте його в налаштування вашого <b>OAuth Client ID</b> in <b>Authorized JavaScript origins</b>:
-                </p>
-                <div className="bg-zinc-900 p-2.5 rounded-lg border border-zinc-800 flex justify-between items-center gap-3">
-                  <code className="text-emerald-400 font-mono text-[10px] break-all select-all block">
-                    {window.location.origin}
-                  </code>
-                  <span className="text-[9px] uppercase tracking-wider text-zinc-500 shrink-0 font-bold">Скопіюйте це</span>
-                </div>
-              </div>
-            )}
-
-            {isPrivateError && (
-              <div className="bg-red-950/40 border border-red-800 p-4 rounded-xl mb-6 text-xs text-red-200">
-                <AlertTriangle className="w-5 h-5 text-red-500 float-left mr-3 mb-2 shrink-0" />
-                <h4 className="font-bold mb-1 text-red-400">🚨 КРИТИЧНО: ФАЙЛ Є ПРИВАТНИМ!</h4>
-                <p className="leading-relaxed">
-                  Google Drive повернув сторінку авторизації замість файлу бази. Через це сторонні користувачі бачать першу базову компіляцію.
-                  <br />
-                  <span className="font-bold block mt-2 text-white">Як миттєво виправити:</span>
-                  1. Відкрийте ваш Google Диск.<br />
-                  2. Клацніть правою кнопкою на 'meat_store_db.json' → Поділитися → Поділитися.<br />
-                  3. Змініть "Обмежений доступ" на "Усі, хто мають посилання" (роль: Переглядач).<br />
-                  4. Натисніть "Готово".
-                </p>
-              </div>
-            )}
-
             <div className="flex gap-3">
               <button
-                onClick={() => {
-                  setDbLogs([]);
-                  fetchPublicDatabase();
-                }}
+                onClick={() => { setDbLogs([]); fetchPublicDatabase(); }}
                 className="flex-1 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold py-3.5 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2"
               >
                 <RotateCw className="w-4 h-4 animate-spin" />
@@ -2251,30 +1984,25 @@ export default function App() {
         </div>
       )}
 
-      {/* --- МОДАЛЬНЕ ВІКНО ВИРІШЕННЯ КОНФЛІКТІВ СИНХРОНІЗАЦІЇ --- */}
+      {/* МОДАЛКА КОНФЛІКТІВ */}
       {syncConflict && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
           <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl w-full max-w-2xl shadow-2xl">
             <h3 className="text-2xl font-bold text-white mb-2 font-serif flex items-center gap-2">
               <RotateCw className="w-6 h-6 text-amber-500" />
-              Контроль версій: Вирішення конфлікту синхронізації
+              Конфлікт версій даних
             </h3>
-            <p className="text-xs text-zinc-400 mb-6 leading-relaxed">
-              Дані на цьому пристрої відрізняються від останньої копії на вашому Google Диску. Будь ласка, оберіть, які саме зміни ви бажаєте зберегти, щоб уникнути втрати товарів.
-            </p>
-
+            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-              {/* Локальна версія */}
               <div className="bg-zinc-950/80 p-5 rounded-2xl border border-amber-500/30 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center gap-2 mb-3">
                     <ArrowUp className="w-5 h-5 text-amber-500" />
-                    <span className="font-bold text-sm text-zinc-200 uppercase tracking-wider font-mono">Дані на цьому пристрої</span>
+                    <span className="font-bold text-sm text-zinc-200 font-mono">На цьому пристрої</span>
                   </div>
                   <ul className="text-xs text-zinc-400 space-y-2 mb-4 font-mono">
                     <li>• Товарів: <b className="text-white">{syncConflict.local.products?.length || 0} шт.</b></li>
-                    <li>• Замовлень: <b className="text-white">{syncConflict.local.orders?.length || 0} шт.</b></li>
-                    <li>• Остання зміна: <b className="text-amber-500">{new Date(lastLocalUpdate).toLocaleString('uk-UA')}</b></li>
+                    <li>• Зміна: <b className="text-amber-500">{new Date(lastLocalUpdate).toLocaleString('uk-UA')}</b></li>
                   </ul>
                 </div>
                 <button
@@ -2282,30 +2010,28 @@ export default function App() {
                     forceUploadToCloud(syncConflict.token, syncConflict.config, syncConflict.local);
                     setSyncConflict(null);
                   }}
-                  className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold py-3 rounded-xl text-xs uppercase tracking-wider transition-all"
+                  className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold py-3 rounded-xl text-xs uppercase transition-all"
                 >
-                  Записати ці зміни в хмару ⬆️
+                  Записати в хмару ⬆️
                 </button>
               </div>
 
-              {/* Хмарна версія */}
               <div className="bg-zinc-950/80 p-5 rounded-2xl border border-zinc-800 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center gap-2 mb-3">
                     <ArrowDown className="w-5 h-5 text-emerald-500" />
-                    <span className="font-bold text-sm text-zinc-200 uppercase tracking-wider font-mono">Дані з Google Диску</span>
+                    <span className="font-bold text-sm text-zinc-200 font-mono">З Google Диску</span>
                   </div>
                   <ul className="text-xs text-zinc-400 space-y-2 mb-4 font-mono">
                     <li>• Товарів: <b className="text-white">{syncConflict.cloud.products?.length || 0} шт.</b></li>
-                    <li>• Замовлень: <b className="text-white">{syncConflict.cloud.orders?.length || 0} шт.</b></li>
-                    <li>• Хмарна копія від: <b className="text-emerald-400">{new Date(syncConflict.cloud.lastUpdated).toLocaleString('uk-UA')}</b></li>
+                    <li>• Хмара від: <b className="text-emerald-400">{new Date(syncConflict.cloud.lastUpdated).toLocaleString('uk-UA')}</b></li>
                   </ul>
                 </div>
                 <button
                   onClick={() => pullFromCloud(syncConflict.cloud)}
-                  className="w-full bg-zinc-850 hover:bg-zinc-800 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-wider transition-all border border-zinc-700"
+                  className="w-full bg-zinc-850 hover:bg-zinc-800 text-white font-bold py-3 rounded-xl text-xs uppercase transition-all border border-zinc-700"
                 >
-                  Завантажити старі дані на пристрій ⬇️
+                  Завантажити на пристрій ⬇️
                 </button>
               </div>
             </div>
@@ -2314,7 +2040,7 @@ export default function App() {
               onClick={() => setSyncConflict(null)}
               className="w-full bg-zinc-800 hover:bg-zinc-750 text-zinc-400 py-2 rounded-lg text-xs font-bold transition-all"
             >
-              Закрити без змін
+              Закрити
             </button>
           </div>
         </div>
@@ -2322,9 +2048,8 @@ export default function App() {
 
       <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-16 pt-8 border-t border-zinc-900 text-center text-[10px] text-zinc-650 font-sans">
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-          <p>© 2026 {siteSettings.title}. Традиційні крафтові вироби за найвищими стандартами якості.</p>
+          <p>© 2026 {siteSettings.title}. Традиційні крафтові вироби.</p>
           
-          {/* */}
           <div className="flex items-center gap-2">
             {!isAdmin ? (
               <button 
@@ -2337,7 +2062,7 @@ export default function App() {
             ) : (
               <div className="flex items-center gap-1.5 text-amber-500/80 font-bold font-mono">
                 <Unlock className="w-3 h-3" />
-                <span>РЕЖИМ АДМІНІСТРАТОРА АКТИВНИЙ</span>
+                <span>РЕЖИМ АДМІНІСТРАТОРА</span>
               </div>
             )}
           </div>
@@ -2354,7 +2079,7 @@ export default function App() {
             
             <form onSubmit={handleAdminLogin} className="space-y-4">
               <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-2">Введіть пароль доступу</label>
+                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-2">Пароль доступу</label>
                 <input
                   type="password"
                   required
@@ -2368,7 +2093,7 @@ export default function App() {
                   placeholder="••••"
                 />
                 {loginError && (
-                  <p className="text-red-500 text-[10px] font-bold mt-2">Невірний пароль доступу!</p>
+                  <p className="text-red-500 text-[10px] font-bold mt-2">Невірний пароль!</p>
                 )}
               </div>
 
