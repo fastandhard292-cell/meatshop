@@ -36,15 +36,13 @@ const formatImageUrl = (url) => {
   if (!url) return 'https://images.unsplash.com/photo-1602491453979-53a99888ecf1?auto=format&fit=crop&q=80&w=600';
   let cleanUrl = url.trim();
   
-  // Конвертація посилань Google Диску виду:
-  // https://drive.google.com/file/d/FILE_ID/view?usp=sharing
+  // Конвертація посилань Google Диску виду: /file/d/FILE_ID/view?usp=sharing
   const gdriveFileMatch = cleanUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
   if (gdriveFileMatch && gdriveFileMatch[1]) {
     return `https://lh3.googleusercontent.com/d/${gdriveFileMatch[1]}`;
   }
   
-  // Конвертація посилань Google Диску виду:
-  // https://drive.google.com/open?id=FILE_ID або ?id=FILE_ID
+  // Конвертація посилань Google Диску виду: ?id=FILE_ID
   const gdriveIdMatch = cleanUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
   if ((cleanUrl.includes('drive.google.com') || cleanUrl.includes('docs.google.com')) && gdriveIdMatch && gdriveIdMatch[1]) {
     return `https://lh3.googleusercontent.com/d/${gdriveIdMatch[1]}`;
@@ -1019,45 +1017,46 @@ export default function App() {
                     {siteSettings.bannerBadge}
                   </span>
                 )}
-                  {/* Порівняльна діагностика конфігурацій */}
-                  <div className="bg-zinc-950 p-5 rounded-2xl border border-zinc-850 mb-6 space-y-3 text-xs">
-                    <h4 className="font-bold text-zinc-300 uppercase tracking-widest text-[10px] flex items-center gap-1.5">
-                      <Info className="w-4 h-4 text-amber-500" />
-                      Порівняння конфігурацій
-                    </h4>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-                      <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
-                        <span className="text-zinc-500 block mb-1">ID в коді (для клієнтів):</span>
-                        <code className="text-amber-500 font-mono select-all break-all block">{PUBLIC_FILE_ID}</code>
-                      </div>
-                      
-                      <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
-                        <span className="text-zinc-500 block mb-1">Ваш активний ID в хмарі:</span>
-                        <code className="text-emerald-500 font-mono select-all break-all block">
-                          {gdriveConfig.fileId || "Файл ще не створено"}
-                        </code>
-                      </div>
-                    </div>
 
-                    {gdriveConfig.fileId && gdriveConfig.fileId !== PUBLIC_FILE_ID && (
-                      <div className="p-3 bg-amber-950/60 border border-amber-500/50 rounded-xl text-amber-200 mt-2 leading-relaxed flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                        <div>
-                          ⚠️ <b>Увага!</b> Ваші клієнти та ви використовуєте різні файли бази даних!
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setGdriveConfig(prev => ({ ...prev, fileId: PUBLIC_FILE_ID }));
-                            showToast("ID у хмарі успішно зрівняно з кодом!", "success");
-                          }}
-                          className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold px-3 py-1.5 rounded-lg text-xs shrink-0"
-                        >
-                          Зрівняти ID з кодом
-                        </button>
-                      </div>
+                {isEditorMode ? (
+                  <textarea
+                    value={siteSettings.bannerTitle}
+                    onChange={(e) => handleTextChange('bannerTitle', e.target.value)}
+                    className="w-full bg-zinc-900 text-white text-3xl sm:text-4xl font-black mt-4 mb-3 font-serif border border-dashed border-amber-500/50 rounded p-2 focus:outline-none h-24 resize-none"
+                  />
+                ) : (
+                  <h2 className="text-3xl sm:text-4xl lg:text-5xl font-black mt-5 mb-3 font-serif leading-tight">
+                    {siteSettings.bannerTitle}
+                  </h2>
+                )}
+
+                {isEditorMode ? (
+                  <textarea
+                    value={siteSettings.bannerDesc}
+                    onChange={(e) => handleTextChange('bannerDesc', e.target.value)}
+                    className="w-full bg-zinc-900 text-zinc-400 text-sm border border-dashed border-amber-500/50 rounded p-2 focus:outline-none h-20 resize-none"
+                  />
+                ) : (
+                  <p className="text-zinc-400 text-sm sm:text-base mb-6 leading-relaxed">
+                    {siteSettings.bannerDesc}
+                  </p>
+                )}
+
+                <div className="flex flex-wrap gap-4 text-[10px] font-bold tracking-wider uppercase text-zinc-300">
+                  <div className="flex items-center gap-1.5 bg-zinc-900/80 px-4 py-2.5 rounded-xl border border-zinc-800">
+                    <span className="text-amber-500 font-bold">✓</span>
+                    {isEditorMode ? (
+                      <input
+                        type="text"
+                        value={siteSettings.advantage1}
+                        onChange={(e) => handleTextChange('advantage1', e.target.value)}
+                        className="bg-zinc-850 text-zinc-300 border border-dashed border-amber-500/50 rounded px-1 focus:outline-none"
+                      />
+                    ) : (
+                      <span>{siteSettings.advantage1}</span>
                     )}
                   </div>
+
                   <div className="flex items-center gap-1.5 bg-zinc-900/80 px-4 py-2.5 rounded-xl border border-zinc-800">
                     <span className="text-amber-500 font-bold">✓</span>
                     {isEditorMode ? (
@@ -1818,6 +1817,24 @@ export default function App() {
                         </code>
                       </div>
                     </div>
+
+                    {gdriveConfig.fileId && gdriveConfig.fileId !== PUBLIC_FILE_ID && (
+                      <div className="p-3 bg-amber-950/60 border border-amber-500/50 rounded-xl text-amber-200 mt-2 leading-relaxed flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div>
+                          ⚠️ <b>Увага!</b> Ваші клієнти та ви використовуєте різні файли бази даних!
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGdriveConfig(prev => ({ ...prev, fileId: PUBLIC_FILE_ID }));
+                            showToast("ID у хмарі успішно зрівняно з кодом!", "success");
+                          }}
+                          className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold px-3 py-1.5 rounded-lg text-xs shrink-0"
+                        >
+                          Зрівняти ID з кодом
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-6">
