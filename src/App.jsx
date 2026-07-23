@@ -1528,7 +1528,7 @@ export default function App() {
                             <span className="text-zinc-500 text-[10px] block mt-0.5">
                               {previewImageError 
                                 ? 'Перевірте, чи відкритий доступ "Усі, хто мають посилання" на Google Диску.' 
-                                ? 'Зображення готове для відображення на вітрині.'}
+                                : 'Зображення готове для відображення на вітрині.'}
                             </span>
                           </div>
                         </div>
