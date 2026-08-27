@@ -112,6 +112,9 @@ export default function App() {
     } catch { return []; }
   });
 
+  // Локальний стан обраної ваги для кожного товару на вітрині
+  const [selectedQuantities, setSelectedQuantities] = useState({});
+
   const [activeTab, setActiveTab] = useState('shop');
   const [adminSubTab, setAdminSubTab] = useState('products');
   const [profileSubTab, setProfileSubTab] = useState('orders');
@@ -1007,7 +1010,8 @@ export default function App() {
                         )}
                       </div>
 
-                      <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between">
+                      {/* Інтерактивний вибір ваги та кнопка додавання */}
+                      <div className="mt-6 pt-4 border-t border-zinc-800">
                         {isEditorMode ? (
                           <div className="flex items-center gap-2">
                             <input
@@ -1027,26 +1031,156 @@ export default function App() {
                             </select>
                           </div>
                         ) : (
-                          <div className="text-2xl font-black font-serif text-white">
-                            {p.price} <span className="text-xs font-sans text-zinc-400">грн/{p.unit}</span>
-                          </div>
-                        )}
+                          <div className="space-y-3">
+                            {/* Базова ціна за одиницю та розрахунок */}
+                            <div className="flex justify-between items-baseline">
+                              <div className="text-xl font-black font-serif text-white">
+                                {p.price} <span className="text-xs font-sans text-zinc-400 font-normal">грн/{p.unit}</span>
+                              </div>
+                              
+                              {p.available && (
+                                <div className="text-sm font-bold text-amber-500 font-serif">
+                                  ≈ {((selectedQuantities[p.id] ?? (p.unit === 'кг' ? 0.3 : 1)) * p.price).toFixed(2)} грн
+                                </div>
+                              )}
+                            </div>
 
-                        {p.available && !isEditorMode && (
-                          <button
-                            onClick={() => {
-                              const existing = cart.find(item => item.id === p.id);
-                              if (existing) {
-                                setCart(cart.map(i => i.id === p.id ? { ...i, quantity: parseFloat((i.quantity + (p.minWeight || 1)).toFixed(2)) } : i));
-                              } else {
-                                setCart([...cart, { ...p, quantity: p.minWeight || 1 }]);
-                              }
-                              showToast(`"${p.name}" додано до кошика!`);
-                            }}
-                            className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 transition-all active:scale-95"
-                          >
-                            <ShoppingBag className="w-4 h-4" /> Додати
-                          </button>
+                            {p.available && (
+                              <>
+                                {/* Селектор для вагової продукції (кг) */}
+                                {p.unit === 'кг' ? (
+                                  <div className="space-y-2">
+                                    {/* Швидкі кнопки пресетів ваги */}
+                                    <div className="grid grid-cols-4 gap-1">
+                                      {[
+                                        { label: '200г', val: 0.2 },
+                                        { label: '300г', val: 0.3 },
+                                        { label: '500г', val: 0.5 },
+                                        { label: '1кг', val: 1.0 }
+                                      ].map(preset => {
+                                        const currentVal = selectedQuantities[p.id] ?? 0.3;
+                                        const isActive = Math.abs(currentVal - preset.val) < 0.01;
+                                        return (
+                                          <button
+                                            key={preset.val}
+                                            type="button"
+                                            onClick={() => setSelectedQuantities(prev => ({ ...prev, [p.id]: preset.val }))}
+                                            className={`py-1 rounded-lg text-[11px] font-bold transition-all border ${
+                                              isActive 
+                                                ? 'bg-amber-500/20 border-amber-500 text-amber-400' 
+                                                : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
+                                            }`}
+                                          >
+                                            {preset.label}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+
+                                    {/* Точне налаштування ваги - / + та кнопка додати */}
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex items-center bg-zinc-950 rounded-xl border border-zinc-800 p-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const current = selectedQuantities[p.id] ?? 0.3;
+                                            const next = Math.max(0.1, parseFloat((current - 0.1).toFixed(2)));
+                                            setSelectedQuantities(prev => ({ ...prev, [p.id]: next }));
+                                          }}
+                                          className="w-7 h-7 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-bold flex items-center justify-center text-sm"
+                                        >
+                                          −
+                                        </button>
+                                        <span className="w-14 text-center text-xs font-bold font-mono text-zinc-200">
+                                          {(selectedQuantities[p.id] ?? 0.3) >= 1 
+                                            ? `${selectedQuantities[p.id] ?? 0.3} кг` 
+                                            : `${Math.round(((selectedQuantities[p.id] ?? 0.3) * 1000))} г`}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const current = selectedQuantities[p.id] ?? 0.3;
+                                            const next = parseFloat((current + 0.1).toFixed(2));
+                                            setSelectedQuantities(prev => ({ ...prev, [p.id]: next }));
+                                          }}
+                                          className="w-7 h-7 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-bold flex items-center justify-center text-sm"
+                                        >
+                                          +
+                                        </button>
+                                      </div>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const qtyToAdd = selectedQuantities[p.id] ?? 0.3;
+                                          const existing = cart.find(item => item.id === p.id);
+                                          if (existing) {
+                                            setCart(cart.map(i => i.id === p.id 
+                                              ? { ...i, quantity: parseFloat((i.quantity + qtyToAdd).toFixed(2)) } 
+                                              : i
+                                            ));
+                                          } else {
+                                            setCart([...cart, { ...p, quantity: qtyToAdd }]);
+                                          }
+                                          showToast(`Додано: "${p.name}" (${qtyToAdd >= 1 ? qtyToAdd + ' кг' : Math.round(qtyToAdd * 1000) + ' г'})`);
+                                        }}
+                                        className="flex-1 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-md shadow-amber-500/10"
+                                      >
+                                        <ShoppingBag className="w-4 h-4" /> Додати
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  /* Селектор для штучних товарів (шт/уп) */
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex items-center bg-zinc-950 rounded-xl border border-zinc-800 p-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const current = selectedQuantities[p.id] ?? 1;
+                                          const next = Math.max(1, current - 1);
+                                          setSelectedQuantities(prev => ({ ...prev, [p.id]: next }));
+                                        }}
+                                        className="w-7 h-7 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-bold flex items-center justify-center text-sm"
+                                      >
+                                        −
+                                      </button>
+                                      <span className="w-12 text-center text-xs font-bold font-mono text-zinc-200">
+                                        {selectedQuantities[p.id] ?? 1} {p.unit}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const current = selectedQuantities[p.id] ?? 1;
+                                          setSelectedQuantities(prev => ({ ...prev, [p.id]: current + 1 }));
+                                        }}
+                                        className="w-7 h-7 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-bold flex items-center justify-center text-sm"
+                                      >
+                                        +
+                                      </button>
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const qtyToAdd = selectedQuantities[p.id] ?? 1;
+                                        const existing = cart.find(item => item.id === p.id);
+                                        if (existing) {
+                                          setCart(cart.map(i => i.id === p.id ? { ...i, quantity: i.quantity + qtyToAdd } : i));
+                                        } else {
+                                          setCart([...cart, { ...p, quantity: qtyToAdd }]);
+                                        }
+                                        showToast(`Додано: "${p.name}" (${qtyToAdd} ${p.unit})`);
+                                      }}
+                                      className="flex-1 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-md shadow-amber-500/10"
+                                    >
+                                      <ShoppingBag className="w-4 h-4" /> Додати
+                                    </button>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -1076,7 +1210,11 @@ export default function App() {
                     <div key={item.id} className="flex justify-between items-center border-b border-zinc-800 pb-3">
                       <div>
                         <h4 className="font-bold text-sm">{item.name}</h4>
-                        <span className="text-xs text-zinc-400">{item.quantity} {item.unit} × {item.price} грн</span>
+                        <span className="text-xs text-zinc-400">
+                          {item.unit === 'кг' && item.quantity < 1 
+                            ? `${Math.round(item.quantity * 1000)} г` 
+                            : `${item.quantity} ${item.unit}`} × {item.price} грн/{item.unit}
+                        </span>
                       </div>
                       <div className="flex items-center gap-3">
                         <span className="font-bold">{(item.price * item.quantity).toFixed(2)} грн</span>
@@ -1183,7 +1321,7 @@ export default function App() {
                       <div className="space-y-1.5 text-xs text-zinc-400">
                         {ord.items?.map((it, idx) => (
                           <div key={idx} className="flex justify-between">
-                            <span>{it.name} × {it.quantity} {it.unit}</span>
+                            <span>{it.name} × {it.unit === 'кг' && it.quantity < 1 ? `${Math.round(it.quantity * 1000)} г` : `${it.quantity} ${it.unit}`}</span>
                             <span className="font-mono">{(it.quantity * it.price).toFixed(2)} грн</span>
                           </div>
                         ))}
@@ -1214,11 +1352,12 @@ export default function App() {
                         </div>
                         <button
                           onClick={() => {
+                            const qtyToAdd = selectedQuantities[p.id] ?? (p.unit === 'кг' ? 0.3 : 1);
                             const existing = cart.find(item => item.id === p.id);
                             if (existing) {
-                              setCart(cart.map(i => i.id === p.id ? { ...i, quantity: parseFloat((i.quantity + (p.minWeight || 1)).toFixed(2)) } : i));
+                              setCart(cart.map(i => i.id === p.id ? { ...i, quantity: parseFloat((i.quantity + qtyToAdd).toFixed(2)) } : i));
                             } else {
-                              setCart([...cart, { ...p, quantity: p.minWeight || 1 }]);
+                              setCart([...cart, { ...p, quantity: qtyToAdd }]);
                             }
                             showToast(`"${p.name}" додано до кошика!`);
                           }}
@@ -1368,7 +1507,7 @@ export default function App() {
                       <p className="text-xs text-zinc-400 mt-1">{o.customer?.name} ({o.customer?.phone})</p>
                       <div className="text-xs text-zinc-500 mt-2">
                         {o.items?.map((item, idx) => (
-                          <div key={idx}>• {item.name} ({item.quantity} {item.unit})</div>
+                          <div key={idx}>• {item.name} ({item.unit === 'кг' && item.quantity < 1 ? `${Math.round(item.quantity * 1000)} г` : `${item.quantity} ${item.unit}`})</div>
                         ))}
                       </div>
                     </div>
