@@ -14,7 +14,9 @@ import {
   Image as ImageIcon,
   LogIn,
   LogOut,
-  Upload
+  Upload,
+  Copy,
+  X
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
@@ -78,8 +80,7 @@ export default function App() {
     bannerBadge: 'АРМІЙСЬКИЙ СТАНДАРТ',
     bannerTitle: 'СПРАВЖНЄ М\'ЯСО З ДИМКОМ ТА ВОЛЕЮ В СЕРЦІ',
     bannerDesc: 'Замовляйте свіжі делікатеси, натуральні ковбаси та соковите мариноване м\'ясо до вашого столу.',
-    advantage1: 'ЕКОЛОГІЧНО ЧИСТА СИРОВИНА',
-    advantage2: 'ВЛАСНЕ КОПТИЛЬНЕ ВИРОБНИЦТВО НА ДРОВАХ',
+    advantages: ['ЕКОЛОГІЧНО ЧИСТА СИРОВИНА', 'ВЛАСНЕ КОПТИЛЬНЕ ВИРОБНИЦТВО НА ДРОВАХ'],
     contactPhone: DEFAULT_PHONE,
     contactTelegram: DEFAULT_PHONE,
     contactWhatsapp: DEFAULT_PHONE_RAW,
@@ -183,6 +184,13 @@ export default function App() {
 
       const { data: settData } = await supabase.from('site_settings').select('*').single();
       if (settData) {
+        let loadedAdvantages = ['ЕКОЛОГІЧНО ЧИСТА СИРОВИНА', 'ВЛАСНЕ КОПТИЛЬНЕ ВИРОБНИЦТВО НА ДРОВАХ'];
+        if (Array.isArray(settData.advantages) && settData.advantages.length > 0) {
+          loadedAdvantages = settData.advantages;
+        } else if (settData.advantage1 || settData.advantage2) {
+          loadedAdvantages = [settData.advantage1, settData.advantage2].filter(Boolean);
+        }
+
         setSiteSettings(prev => ({
           ...prev,
           title: settData.title || prev.title,
@@ -190,8 +198,7 @@ export default function App() {
           bannerBadge: settData.banner_badge || prev.bannerBadge,
           bannerTitle: settData.banner_title || prev.bannerTitle,
           bannerDesc: settData.banner_desc || prev.bannerDesc,
-          advantage1: settData.advantage1 || prev.advantage1,
-          advantage2: settData.advantage2 || prev.advantage2,
+          advantages: loadedAdvantages,
           contactPhone: settData.contact_phone || DEFAULT_PHONE,
           contactTelegram: settData.contact_telegram || DEFAULT_PHONE,
           contactWhatsapp: settData.contact_whatsapp || DEFAULT_PHONE_RAW,
@@ -210,7 +217,7 @@ export default function App() {
     fetchData();
   }, []);
 
-  // Збереження глобальних налаштувань
+  // Збереження глобальних текстових налаштувань
   const handleTextChange = async (key, newValue) => {
     const updated = { ...siteSettings, [key]: newValue };
     setSiteSettings(updated);
@@ -223,12 +230,82 @@ export default function App() {
         banner_badge: updated.bannerBadge,
         banner_title: updated.bannerTitle,
         banner_desc: updated.bannerDesc,
-        advantage1: updated.advantage1,
-        advantage2: updated.advantage2,
+        advantages: updated.advantages,
         contact_phone: updated.contactPhone,
         contact_telegram: updated.contactTelegram,
         contact_whatsapp: updated.contactWhatsapp,
         contact_viber: updated.contactViber
+      });
+    }
+  };
+
+  // Робота зі списком переваг (додавання/дублювання, редагування, видалення)
+  const handleAddAdvantage = async (textToCopy = 'НОВА ПЕРЕВАГА') => {
+    const currentList = siteSettings.advantages || [];
+    const updated = [...currentList, textToCopy];
+    
+    setSiteSettings(prev => ({ ...prev, advantages: updated }));
+    showToast('Перевагу додано!', 'success');
+
+    if (isAdmin) {
+      await supabase.from('site_settings').upsert({
+        id: 1,
+        title: siteSettings.title,
+        subtitle: siteSettings.subtitle,
+        banner_badge: siteSettings.bannerBadge,
+        banner_title: siteSettings.bannerTitle,
+        banner_desc: siteSettings.bannerDesc,
+        advantages: updated,
+        contact_phone: siteSettings.contactPhone,
+        contact_telegram: siteSettings.contactTelegram,
+        contact_whatsapp: siteSettings.contactWhatsapp,
+        contact_viber: siteSettings.contactViber
+      });
+    }
+  };
+
+  const handleUpdateAdvantage = async (index, newText) => {
+    const currentList = [...(siteSettings.advantages || [])];
+    currentList[index] = newText;
+    
+    setSiteSettings(prev => ({ ...prev, advantages: currentList }));
+
+    if (isAdmin) {
+      await supabase.from('site_settings').upsert({
+        id: 1,
+        title: siteSettings.title,
+        subtitle: siteSettings.subtitle,
+        banner_badge: siteSettings.bannerBadge,
+        banner_title: siteSettings.bannerTitle,
+        banner_desc: siteSettings.bannerDesc,
+        advantages: currentList,
+        contact_phone: siteSettings.contactPhone,
+        contact_telegram: siteSettings.contactTelegram,
+        contact_whatsapp: siteSettings.contactWhatsapp,
+        contact_viber: siteSettings.contactViber
+      });
+    }
+  };
+
+  const handleDeleteAdvantage = async (index) => {
+    const currentList = (siteSettings.advantages || []).filter((_, i) => i !== index);
+    
+    setSiteSettings(prev => ({ ...prev, advantages: currentList }));
+    showToast('Перевагу видалено', 'info');
+
+    if (isAdmin) {
+      await supabase.from('site_settings').upsert({
+        id: 1,
+        title: siteSettings.title,
+        subtitle: siteSettings.subtitle,
+        banner_badge: siteSettings.bannerBadge,
+        banner_title: siteSettings.bannerTitle,
+        banner_desc: siteSettings.bannerDesc,
+        advantages: currentList,
+        contact_phone: siteSettings.contactPhone,
+        contact_telegram: siteSettings.contactTelegram,
+        contact_whatsapp: siteSettings.contactWhatsapp,
+        contact_viber: siteSettings.contactViber
       });
     }
   };
@@ -344,7 +421,7 @@ export default function App() {
   const handleDeleteProduct = async (productId) => {
     const { error } = await supabase.from('products').delete().eq('id', productId);
     if (error) {
-      showToast(`Помилка: ${error.message}`, 'error');
+      showToast(`Помилка видалення: ${error.message}`, 'error');
       return;
     }
     showToast('Товар видалено', 'info');
@@ -532,7 +609,7 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
         {activeTab === 'shop' && (
           <div>
-            {/* Банер із підтримкою повного редагування */}
+            {/* Банер із підтримкою повного редагування та динамічних переваг */}
             <div className="rounded-3xl bg-gradient-to-r from-zinc-950 via-zinc-900 to-red-950 border border-zinc-900 p-8 sm:p-12 mb-10 shadow-2xl relative">
               <div className="relative z-10 max-w-3xl">
                 {isEditorMode ? (
@@ -571,32 +648,59 @@ export default function App() {
                   </p>
                 )}
 
-                <div className="flex flex-wrap gap-4 text-[11px] font-bold tracking-wider uppercase text-zinc-300 pt-2">
-                  <div className="flex items-center gap-2 bg-zinc-900/80 px-4 py-2.5 rounded-xl border border-zinc-800">
-                    <span className="text-amber-500 font-bold">✓</span>
-                    {isEditorMode ? (
-                      <input
-                        value={siteSettings.advantage1}
-                        onChange={(e) => handleTextChange('advantage1', e.target.value)}
-                        className="bg-zinc-950 text-zinc-200 border border-dashed border-amber-500 rounded px-1.5 focus:outline-none"
-                      />
-                    ) : (
-                      <span>{siteSettings.advantage1}</span>
-                    )}
-                  </div>
+                {/* Динамічний блок переваг (бейджі) */}
+                <div className="flex flex-wrap items-center gap-3 text-[11px] font-bold tracking-wider uppercase text-zinc-300 pt-3">
+                  {(siteSettings.advantages || ['ЕКОЛОГІЧНО ЧИСТА СИРОВИНА', 'ВЛАСНЕ КОПТИЛЬНЕ ВИРОБНИЦТВО НА ДРОВАХ']).map((adv, idx) => (
+                    <div 
+                      key={idx} 
+                      className="flex items-center gap-2 bg-zinc-900/90 px-3.5 py-2 rounded-xl border border-zinc-800 shadow-sm transition-all"
+                    >
+                      <span className="text-amber-500 font-bold">✓</span>
+                      
+                      {isEditorMode ? (
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="text"
+                            value={adv}
+                            onChange={(e) => handleUpdateAdvantage(idx, e.target.value)}
+                            className="bg-zinc-950 text-amber-400 border border-dashed border-amber-500/70 rounded px-2 py-1 text-xs font-bold focus:outline-none min-w-[200px]"
+                            placeholder="Текст переваги..."
+                          />
+                          {/* Кнопка дублювання */}
+                          <button
+                            type="button"
+                            onClick={() => handleAddAdvantage(adv)}
+                            title="Дублювати та написати щось ще"
+                            className="p-1 hover:bg-zinc-800 text-zinc-400 hover:text-amber-400 rounded transition-colors"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                          {/* Кнопка видалення */}
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteAdvantage(idx)}
+                            title="Видалити"
+                            className="p-1 hover:bg-red-950 text-zinc-500 hover:text-red-400 rounded transition-colors"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <span>{adv}</span>
+                      )}
+                    </div>
+                  ))}
 
-                  <div className="flex items-center gap-2 bg-zinc-900/80 px-4 py-2.5 rounded-xl border border-zinc-800">
-                    <span className="text-amber-500 font-bold">✓</span>
-                    {isEditorMode ? (
-                      <input
-                        value={siteSettings.advantage2}
-                        onChange={(e) => handleTextChange('advantage2', e.target.value)}
-                        className="bg-zinc-950 text-zinc-200 border border-dashed border-amber-500 rounded px-1.5 focus:outline-none"
-                      />
-                    ) : (
-                      <span>{siteSettings.advantage2}</span>
-                    )}
-                  </div>
+                  {/* Кнопка додавання нового пункту в режимі редактора */}
+                  {isEditorMode && (
+                    <button
+                      type="button"
+                      onClick={() => handleAddAdvantage('НОВА ПЕРЕВАГА')}
+                      className="flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-dashed border-amber-500/50 px-3.5 py-2 rounded-xl text-xs font-bold transition-all"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Додати перевагу
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
