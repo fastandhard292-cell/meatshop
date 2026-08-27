@@ -13,7 +13,8 @@ import {
   Phone, 
   Image as ImageIcon,
   LogIn,
-  LogOut
+  LogOut,
+  Upload
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
@@ -164,7 +165,7 @@ export default function App() {
 
   const fetchData = async () => {
     try {
-      const { data: prodData } = await supabase.from('products').select('*');
+      const { data: prodData } = await supabase.from('products').select('*').order('created_at', { ascending: false });
       if (prodData) {
         setProducts(prodData.map(p => ({
           id: p.id,
@@ -209,6 +210,7 @@ export default function App() {
     fetchData();
   }, []);
 
+  // Збереження глобальних налаштувань
   const handleTextChange = async (key, newValue) => {
     const updated = { ...siteSettings, [key]: newValue };
     setSiteSettings(updated);
@@ -231,39 +233,75 @@ export default function App() {
     }
   };
 
-  const handleFileUpload = async (e) => {
+  // Пряме оновлення полів товару з головної сторінки
+  const handleInlineProductUpdate = async (productId, field, value) => {
+    const updatedProducts = products.map(p => {
+      if (p.id === productId) {
+        return { ...p, [field]: value };
+      }
+      return p;
+    });
+    setProducts(updatedProducts);
+
+    const targetProduct = updatedProducts.find(p => p.id === productId);
+    if (targetProduct) {
+      await supabase.from('products').update({
+        name: targetProduct.name,
+        price: parseFloat(targetProduct.price) || 0,
+        unit: targetProduct.unit,
+        description: targetProduct.description,
+        available: targetProduct.available,
+        image: targetProduct.image
+      }).eq('id', productId);
+    }
+  };
+
+  // Завантаження фото безпосередньо для конкретного товару
+  const handleDirectProductPhotoUpload = async (productId, e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith('image/')) {
-      showToast('Оберіть графічний файл', 'error');
-      return;
-    }
-
     try {
-      showToast('Стиснення та завантаження у Storage...', 'info');
+      showToast('Завантаження фото...', 'info');
       const compressedBlob = await compressImage(file, 900, 0.75);
       const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
       const filePath = `products/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('product-images')
-        .upload(filePath, compressedBlob, { 
-          contentType: 'image/jpeg',
-          cacheControl: '31536000',
-          upsert: false 
-        });
+        .upload(filePath, compressedBlob, { contentType: 'image/jpeg', cacheControl: '31536000' });
 
       if (uploadError) throw uploadError;
 
-      const { data: { publicUrl } } = supabase.storage
-        .from('product-images')
-        .getPublicUrl(filePath);
-
-      setProductForm(prev => ({ ...prev, image: publicUrl }));
-      showToast('Фото успішно завантажено!', 'success');
+      const { data: { publicUrl } } = supabase.storage.from('product-images').getPublicUrl(filePath);
+      await handleInlineProductUpdate(productId, 'image', publicUrl);
+      showToast('Фото оновлено!', 'success');
     } catch (err) {
-      console.error('Помилка завантаження фото:', err);
+      showToast(`Помилка: ${err.message}`, 'error');
+    }
+  };
+
+  // Завантаження фото через форму в адмінці
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      showToast('Завантаження фото...', 'info');
+      const compressedBlob = await compressImage(file, 900, 0.75);
+      const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
+      const filePath = `products/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('product-images')
+        .upload(filePath, compressedBlob, { contentType: 'image/jpeg', cacheControl: '31536000' });
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage.from('product-images').getPublicUrl(filePath);
+      setProductForm(prev => ({ ...prev, image: publicUrl }));
+      showToast('Фото успішно додано!', 'success');
+    } catch (err) {
       showToast(`Помилка: ${err.message}`, 'error');
     }
   };
@@ -290,7 +328,7 @@ export default function App() {
 
     const { error } = await supabase.from('products').upsert(payload);
     if (error) {
-      showToast(`Помилка збереження: ${error.message}`, 'error');
+      showToast(`Помилка: ${error.message}`, 'error');
       return;
     }
 
@@ -306,7 +344,7 @@ export default function App() {
   const handleDeleteProduct = async (productId) => {
     const { error } = await supabase.from('products').delete().eq('id', productId);
     if (error) {
-      showToast(`Помилка видалення: ${error.message}`, 'error');
+      showToast(`Помилка: ${error.message}`, 'error');
       return;
     }
     showToast('Товар видалено', 'info');
@@ -393,7 +431,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Панель адміністратора */}
+      {/* Верхня панель адміністратора */}
       {isAdmin && (
         <div className="bg-zinc-900 border-b border-zinc-800 py-2.5 px-4 text-xs font-mono">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-3">
@@ -404,8 +442,8 @@ export default function App() {
             <div className="flex items-center gap-3">
               <button 
                 onClick={() => setIsEditorMode(!isEditorMode)}
-                className={`px-3 py-1 rounded-md font-bold flex items-center gap-1.5 transition-all ${
-                  isEditorMode ? 'bg-amber-500 text-zinc-950' : 'bg-zinc-800 text-zinc-400 hover:text-white'
+                className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-all shadow-md ${
+                  isEditorMode ? 'bg-amber-500 text-zinc-950' : 'bg-zinc-800 text-zinc-300 hover:text-white'
                 }`}
               >
                 <Edit3 className="w-3.5 h-3.5" />
@@ -420,7 +458,7 @@ export default function App() {
       <header className="sticky top-0 z-40 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-900">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3.5 cursor-pointer" onClick={() => setActiveTab('shop')}>
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-red-700 to-amber-600 flex items-center justify-center text-white font-serif text-2xl font-black">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-red-700 to-amber-600 flex items-center justify-center text-white font-serif text-2xl font-black shrink-0">
               М
             </div>
             <div>
@@ -428,7 +466,7 @@ export default function App() {
                 <input
                   value={siteSettings.title}
                   onChange={(e) => handleTextChange('title', e.target.value)}
-                  className="bg-zinc-900 text-white font-bold text-lg font-serif border border-dashed border-amber-500/50 rounded px-1"
+                  className="bg-zinc-900 text-white font-bold text-lg font-serif border border-dashed border-amber-500 rounded px-1.5 py-0.5 focus:outline-none"
                 />
               ) : (
                 <h1 className="text-lg font-bold text-zinc-100 font-serif">{siteSettings.title}</h1>
@@ -437,7 +475,7 @@ export default function App() {
                 <input
                   value={siteSettings.subtitle}
                   onChange={(e) => handleTextChange('subtitle', e.target.value)}
-                  className="bg-zinc-900 text-amber-500/90 text-xs border border-dashed border-amber-500/50 rounded px-1 block mt-1"
+                  className="bg-zinc-900 text-amber-500 text-xs border border-dashed border-amber-500 rounded px-1.5 py-0.5 block mt-1 focus:outline-none"
                 />
               ) : (
                 <p className="text-xs text-amber-500/90 font-medium">{siteSettings.subtitle}</p>
@@ -449,13 +487,13 @@ export default function App() {
             <nav className="hidden md:flex items-center gap-2">
               <button 
                 onClick={() => setActiveTab('shop')} 
-                className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'shop' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:text-white'}`}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'shop' ? 'bg-amber-500 text-zinc-950 shadow-md' : 'text-zinc-400 hover:text-white'}`}
               >
                 Вітрина
               </button>
               <button 
                 onClick={() => setActiveTab('cart')} 
-                className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 ${activeTab === 'cart' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:text-white'}`}
+                className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${activeTab === 'cart' ? 'bg-amber-500 text-zinc-950 shadow-md' : 'text-zinc-400 hover:text-white'}`}
               >
                 <ShoppingBag className="w-4 h-4" />
                 Кошик {cart.length > 0 && `(${cart.length})`}
@@ -463,7 +501,7 @@ export default function App() {
               {isAdmin && (
                 <button 
                   onClick={() => setActiveTab('admin')} 
-                  className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'admin' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:text-white'}`}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'admin' ? 'bg-amber-500 text-zinc-950 shadow-md' : 'text-zinc-400 hover:text-white'}`}
                 >
                   Керування
                 </button>
@@ -480,7 +518,7 @@ export default function App() {
             ) : (
               <button 
                 onClick={handleGoogleLogin} 
-                className="flex items-center gap-2 bg-zinc-900 hover:bg-zinc-850 text-white text-xs font-bold py-2.5 px-4 rounded-xl border border-zinc-800"
+                className="flex items-center gap-2 bg-zinc-900 hover:bg-zinc-850 text-white text-xs font-bold py-2.5 px-4 rounded-xl border border-zinc-800 transition-all"
               >
                 <LogIn className="w-4 h-4 text-amber-500" />
                 Увійти через Gmail
@@ -490,30 +528,86 @@ export default function App() {
         </div>
       </header>
 
-      {/* Головний блок */}
+      {/* Головний контент */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
         {activeTab === 'shop' && (
           <div>
-            {/* Банер */}
-            <div className="rounded-3xl bg-gradient-to-r from-zinc-950 via-zinc-900 to-red-950 border border-zinc-900 p-8 sm:p-12 mb-10 shadow-2xl">
-              <span className="px-3.5 py-1.5 bg-red-950/60 border border-red-800/60 text-red-400 rounded-full text-xs font-bold uppercase">
-                {siteSettings.bannerBadge}
-              </span>
-              <h2 className="text-3xl sm:text-5xl font-black mt-5 mb-3 font-serif leading-tight">
-                {siteSettings.bannerTitle}
-              </h2>
-              <p className="text-zinc-400 text-sm sm:text-base max-w-2xl mb-6">
-                {siteSettings.bannerDesc}
-              </p>
+            {/* Банер із підтримкою повного редагування */}
+            <div className="rounded-3xl bg-gradient-to-r from-zinc-950 via-zinc-900 to-red-950 border border-zinc-900 p-8 sm:p-12 mb-10 shadow-2xl relative">
+              <div className="relative z-10 max-w-3xl">
+                {isEditorMode ? (
+                  <input
+                    value={siteSettings.bannerBadge}
+                    onChange={(e) => handleTextChange('bannerBadge', e.target.value)}
+                    className="bg-zinc-900 text-red-400 border border-dashed border-amber-500 rounded px-2.5 py-1 text-xs font-bold uppercase focus:outline-none"
+                  />
+                ) : (
+                  <span className="px-3.5 py-1.5 bg-red-950/60 border border-red-800/60 text-red-400 rounded-full text-xs font-bold uppercase">
+                    {siteSettings.bannerBadge}
+                  </span>
+                )}
+
+                {isEditorMode ? (
+                  <textarea
+                    value={siteSettings.bannerTitle}
+                    onChange={(e) => handleTextChange('bannerTitle', e.target.value)}
+                    className="w-full bg-zinc-900 text-white text-3xl sm:text-4xl font-black mt-4 mb-3 font-serif border border-dashed border-amber-500 rounded p-2 focus:outline-none resize-none h-28"
+                  />
+                ) : (
+                  <h2 className="text-3xl sm:text-5xl font-black mt-5 mb-3 font-serif leading-tight text-white">
+                    {siteSettings.bannerTitle}
+                  </h2>
+                )}
+
+                {isEditorMode ? (
+                  <textarea
+                    value={siteSettings.bannerDesc}
+                    onChange={(e) => handleTextChange('bannerDesc', e.target.value)}
+                    className="w-full bg-zinc-900 text-zinc-300 text-sm border border-dashed border-amber-500 rounded p-2 focus:outline-none resize-none h-20"
+                  />
+                ) : (
+                  <p className="text-zinc-400 text-sm sm:text-base mb-6 leading-relaxed">
+                    {siteSettings.bannerDesc}
+                  </p>
+                )}
+
+                <div className="flex flex-wrap gap-4 text-[11px] font-bold tracking-wider uppercase text-zinc-300 pt-2">
+                  <div className="flex items-center gap-2 bg-zinc-900/80 px-4 py-2.5 rounded-xl border border-zinc-800">
+                    <span className="text-amber-500 font-bold">✓</span>
+                    {isEditorMode ? (
+                      <input
+                        value={siteSettings.advantage1}
+                        onChange={(e) => handleTextChange('advantage1', e.target.value)}
+                        className="bg-zinc-950 text-zinc-200 border border-dashed border-amber-500 rounded px-1.5 focus:outline-none"
+                      />
+                    ) : (
+                      <span>{siteSettings.advantage1}</span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 bg-zinc-900/80 px-4 py-2.5 rounded-xl border border-zinc-800">
+                    <span className="text-amber-500 font-bold">✓</span>
+                    {isEditorMode ? (
+                      <input
+                        value={siteSettings.advantage2}
+                        onChange={(e) => handleTextChange('advantage2', e.target.value)}
+                        className="bg-zinc-950 text-zinc-200 border border-dashed border-amber-500 rounded px-1.5 focus:outline-none"
+                      />
+                    ) : (
+                      <span>{siteSettings.advantage2}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
 
-            {/* Пошук та фільтри */}
+            {/* Пошук та категорії */}
             <div className="flex flex-col sm:flex-row gap-4 justify-between items-center mb-8">
               <div className="relative w-full sm:w-96">
                 <Search className="w-5 h-5 text-zinc-500 absolute left-3 top-3" />
                 <input
                   type="text"
-                  placeholder="Пошук делікатесів..."
+                  placeholder="Пошук балика, ковбаси чи стейка..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none"
@@ -541,26 +635,100 @@ export default function App() {
               </div>
             </div>
 
-            {/* Сітка товарів */}
+            {/* Сітка товарів із підтримкою редагування прямо в картках */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredProducts.map(p => (
-                <div key={p.id} className="bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-850 flex flex-col justify-between">
-                  <div className="h-56 bg-zinc-950 relative">
+                <div key={p.id} className="bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-850 flex flex-col justify-between shadow-xl">
+                  {/* Зображення */}
+                  <div className="h-56 bg-zinc-950 relative overflow-hidden group">
                     <img src={formatImageUrl(p.image)} alt={p.name} className="w-full h-full object-cover" />
-                    {!p.available && (
-                      <div className="absolute inset-0 bg-black/70 flex items-center justify-center font-bold text-xs uppercase tracking-wider text-red-400">
+                    
+                    {/* Кнопка зміни фото в режимі редактора */}
+                    {isEditorMode && (
+                      <label 
+                        htmlFor={`photo-upload-${p.id}`}
+                        className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center cursor-pointer text-amber-400 hover:text-white transition-all font-bold text-xs gap-2"
+                      >
+                        <Upload className="w-6 h-6" />
+                        <span>Змінити фото</span>
+                        <input 
+                          id={`photo-upload-${p.id}`}
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={(e) => handleDirectProductPhotoUpload(p.id, e)}
+                        />
+                      </label>
+                    )}
+
+                    {!p.available && !isEditorMode && (
+                      <div className="absolute inset-0 bg-black/75 flex items-center justify-center font-bold text-xs uppercase tracking-wider text-red-400">
                         Немає в наявності
                       </div>
                     )}
                   </div>
+
+                  {/* Опис і ціна */}
                   <div className="p-6 flex-1 flex flex-col justify-between">
                     <div>
-                      <h3 className="text-lg font-bold font-serif">{p.name}</h3>
-                      <p className="text-xs text-zinc-400 mt-2">{p.description}</p>
+                      {isEditorMode ? (
+                        <div className="space-y-2">
+                          <input
+                            value={p.name}
+                            onChange={(e) => handleInlineProductUpdate(p.id, 'name', e.target.value)}
+                            className="w-full bg-zinc-950 text-white font-bold font-serif text-base border border-dashed border-amber-500 rounded p-1.5 focus:outline-none"
+                            placeholder="Назва товару"
+                          />
+                          <textarea
+                            value={p.description || ''}
+                            onChange={(e) => handleInlineProductUpdate(p.id, 'description', e.target.value)}
+                            className="w-full bg-zinc-950 text-zinc-300 text-xs border border-dashed border-amber-500 rounded p-1.5 focus:outline-none resize-none h-16"
+                            placeholder="Опис товару"
+                          />
+                          <label className="flex items-center gap-2 text-xs font-bold text-amber-500 cursor-pointer pt-1">
+                            <input
+                              type="checkbox"
+                              checked={p.available}
+                              onChange={(e) => handleInlineProductUpdate(p.id, 'available', e.target.checked)}
+                              className="rounded"
+                            />
+                            В наявності на вітрині
+                          </label>
+                        </div>
+                      ) : (
+                        <>
+                          <h3 className="text-lg font-bold font-serif text-white">{p.name}</h3>
+                          <p className="text-xs text-zinc-400 mt-2 line-clamp-3 leading-relaxed">{p.description}</p>
+                        </>
+                      )}
                     </div>
+
                     <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between">
-                      <div className="text-2xl font-black font-serif">{p.price} <span className="text-xs font-sans text-zinc-400">грн/{p.unit}</span></div>
-                      {p.available && (
+                      {isEditorMode ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            value={p.price}
+                            onChange={(e) => handleInlineProductUpdate(p.id, 'price', e.target.value)}
+                            className="w-20 bg-zinc-950 text-amber-400 font-bold font-serif text-lg border border-dashed border-amber-500 rounded p-1 focus:outline-none"
+                          />
+                          <select
+                            value={p.unit}
+                            onChange={(e) => handleInlineProductUpdate(p.id, 'unit', e.target.value)}
+                            className="bg-zinc-950 text-zinc-300 text-xs border border-dashed border-amber-500 rounded p-1"
+                          >
+                            <option value="кг">грн/кг</option>
+                            <option value="шт">грн/шт</option>
+                            <option value="уп">грн/уп</option>
+                          </select>
+                        </div>
+                      ) : (
+                        <div className="text-2xl font-black font-serif text-white">
+                          {p.price} <span className="text-xs font-sans text-zinc-400">грн/{p.unit}</span>
+                        </div>
+                      )}
+
+                      {p.available && !isEditorMode && (
                         <button
                           onClick={() => {
                             const existing = cart.find(item => item.id === p.id);
@@ -571,7 +739,7 @@ export default function App() {
                             }
                             showToast(`"${p.name}" додано до кошика!`);
                           }}
-                          className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2"
+                          className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 transition-all active:scale-95"
                         >
                           <ShoppingBag className="w-4 h-4" /> Додати
                         </button>
@@ -638,7 +806,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Адмінка */}
+        {/* Панель керування (Адмінка) */}
         {activeTab === 'admin' && isAdmin && (
           <div className="space-y-8">
             <div className="flex gap-2 border-b border-zinc-800 pb-4">
@@ -703,7 +871,7 @@ export default function App() {
                     </label>
                     <input id="file-upload" type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
                     <input
-                      placeholder="URL фото або оберіть файл"
+                      placeholder="URL фото або завантажте файл"
                       value={productForm.image}
                       onChange={(e) => setProductForm({ ...productForm, image: e.target.value })}
                       className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl text-xs"
@@ -735,7 +903,7 @@ export default function App() {
 
                 <div className="lg:col-span-7 bg-zinc-900 rounded-3xl border border-zinc-800 p-4 space-y-3">
                   {products.map(p => (
-                    <div key={p.id} className="flex justify-between items-center p-3 bg-zinc-950 rounded-2xl border border-zinc-850">
+                    <div key={p.id} className="flex justify-between items-center p-3 bg-zinc-950 rounded-2xl border border-zinc-855">
                       <div className="flex items-center gap-3">
                         <img src={formatImageUrl(p.image)} alt={p.name} className="w-12 h-12 rounded-xl object-cover" />
                         <div>
@@ -878,7 +1046,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Плаваюче меню швидкого зв'язку */}
+      {/* Плаваюче меню зв'язку */}
       <div className="fixed bottom-6 right-6 z-40">
         {showContactMenu && (
           <div className="mb-3 flex flex-col gap-1.5 bg-zinc-900 border border-zinc-800 p-3 rounded-2xl shadow-2xl text-xs font-bold w-44">
