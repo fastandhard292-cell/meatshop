@@ -602,7 +602,7 @@ export default function App() {
   const availableCategoriesList = (siteSettings.categories || DEFAULT_CATEGORIES).filter(c => c.id !== 'all');
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans pb-20 selection:bg-red-800 selection:text-white">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans pb-28 md:pb-20 selection:bg-red-800 selection:text-white">
       {toast && (
         <div className={`fixed top-4 right-4 z-50 p-4 rounded-xl shadow-2xl flex items-center gap-3 border ${
           toast.type === 'error' ? 'bg-red-950/90 border-red-800 text-red-200' : 'bg-zinc-900/90 border-amber-500/30 text-amber-200'
@@ -665,6 +665,7 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Десктопна навігація */}
             <nav className="hidden md:flex items-center gap-2">
               <button 
                 onClick={() => setActiveTab('shop')} 
@@ -719,7 +720,8 @@ export default function App() {
                 className="flex items-center gap-2 bg-zinc-900 hover:bg-zinc-850 text-white text-xs font-bold py-2.5 px-4 rounded-xl border border-zinc-800 transition-all"
               >
                 <LogIn className="w-4 h-4 text-amber-500" />
-                Увійти через Gmail
+                <span className="hidden sm:inline">Увійти через Gmail</span>
+                <span className="sm:hidden">Увійти</span>
               </button>
             )}
           </div>
@@ -836,7 +838,7 @@ export default function App() {
                 />
               </div>
 
-              {/* Панель категорій із підтримкою редагування на місці */}
+              {/* Панель категорій */}
               <div className="flex items-center gap-2 overflow-x-auto w-full pb-2 sm:pb-0 scrollbar-none">
                 {(siteSettings.categories || DEFAULT_CATEGORIES).map(cat => {
                   const isSelected = selectedCategory === cat.id;
@@ -955,7 +957,6 @@ export default function App() {
                               placeholder="Назва товару"
                             />
                             
-                            {/* Селектор категорії для товару */}
                             <select
                               value={p.category}
                               onChange={(e) => handleInlineProductUpdate(p.id, 'category', e.target.value)}
@@ -1458,8 +1459,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Плаваюче меню зв'язку */}
-      <div className="fixed bottom-6 right-6 z-40">
+      {/* Плаваюче меню зв'язку (піднято для мобільних) */}
+      <div className="fixed bottom-20 md:bottom-6 right-6 z-40">
         {showContactMenu && (
           <div className="mb-3 flex flex-col gap-1.5 bg-zinc-900 border border-zinc-800 p-3 rounded-2xl shadow-2xl text-xs font-bold w-44">
             <a href={`tel:${siteSettings.contactPhone}`} className="p-2 hover:bg-zinc-800 rounded-lg flex items-center gap-2.5 text-zinc-200">
@@ -1482,6 +1483,56 @@ export default function App() {
         >
           <MessageSquare className="w-6 h-6" />
         </button>
+      </div>
+
+      {/* Мобільна нижня панель навігації */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-zinc-950/95 backdrop-blur-lg border-t border-zinc-900 px-3 py-2 flex justify-around items-center">
+        <button 
+          onClick={() => setActiveTab('shop')} 
+          className={`flex flex-col items-center gap-1 text-[10px] font-bold transition-colors ${activeTab === 'shop' ? 'text-amber-500' : 'text-zinc-400'}`}
+        >
+          <span className="p-1 rounded-xl bg-zinc-900 border border-zinc-800">🥩</span>
+          Вітрина
+        </button>
+
+        <button 
+          onClick={() => setActiveTab('cart')} 
+          className={`flex flex-col items-center gap-1 text-[10px] font-bold relative transition-colors ${activeTab === 'cart' ? 'text-amber-500' : 'text-zinc-400'}`}
+        >
+          <div className="relative p-1 rounded-xl bg-zinc-900 border border-zinc-800">
+            <ShoppingBag className="w-4 h-4" />
+            {cart.length > 0 && (
+              <span className="absolute -top-1 -right-1 bg-amber-500 text-zinc-950 text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center">
+                {cart.length}
+              </span>
+            )}
+          </div>
+          Кошик
+        </button>
+
+        {user && (
+          <button 
+            onClick={() => setActiveTab('profile')} 
+            className={`flex flex-col items-center gap-1 text-[10px] font-bold transition-colors ${activeTab === 'profile' ? 'text-amber-500' : 'text-zinc-400'}`}
+          >
+            <div className="p-1 rounded-xl bg-zinc-900 border border-zinc-800">
+              <User className="w-4 h-4" />
+            </div>
+            Кабінет
+          </button>
+        )}
+
+        {isAdmin && (
+          <button 
+            onClick={() => setActiveTab('admin')} 
+            className={`flex flex-col items-center gap-1 text-[10px] font-bold transition-colors ${activeTab === 'admin' ? 'text-amber-500' : 'text-zinc-400'}`}
+          >
+            <div className="p-1 rounded-xl bg-zinc-900 border border-zinc-800">
+              <Settings className="w-4 h-4" />
+            </div>
+            Керування
+          </button>
+        )}
       </div>
     </div>
   );
