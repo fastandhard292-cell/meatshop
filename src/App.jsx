@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ShoppingBag, 
   Settings, 
@@ -19,9 +19,7 @@ import {
   X,
   Heart,
   User,
-  Package,
-  Clock,
-  MapPin
+  Package
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
@@ -32,6 +30,14 @@ const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || '')
 
 const DEFAULT_PHONE = '+380984536052';
 const DEFAULT_PHONE_RAW = '380984536052';
+
+const DEFAULT_CATEGORIES = [
+  { id: 'all', name: 'Усе меню' },
+  { id: 'sausages', name: 'Ковбаси' },
+  { id: 'delicacies', name: 'Делікатеси' },
+  { id: 'fresh_meat', name: 'Свіже м’ясо' },
+  { id: 'semi_finished', name: 'Напівфабрикати' }
+];
 
 const formatImageUrl = (url) => {
   if (!url) return 'https://images.unsplash.com/photo-1602491453979-53a99888ecf1?auto=format&fit=crop&q=80&w=600';
@@ -93,6 +99,7 @@ export default function App() {
     bannerTitle: 'СПРАВЖНЄ М\'ЯСО З ДИМКОМ ТА ВОЛЕЮ В СЕРЦІ',
     bannerDesc: 'Замовляйте свіжі делікатеси, натуральні ковбаси та соковите мариноване м\'ясо до вашого столу.',
     advantages: ['ЕКОЛОГІЧНО ЧИСТА СИРОВИНА', 'ВЛАСНЕ КОПТИЛЬНЕ ВИРОБНИЦТВО НА ДРОВАХ'],
+    categories: DEFAULT_CATEGORIES,
     contactPhone: DEFAULT_PHONE,
     contactTelegram: DEFAULT_PHONE,
     contactWhatsapp: DEFAULT_PHONE_RAW,
@@ -105,9 +112,9 @@ export default function App() {
     } catch { return []; }
   });
 
-  const [activeTab, setActiveTab] = useState('shop'); // 'shop' | 'cart' | 'profile' | 'admin'
+  const [activeTab, setActiveTab] = useState('shop');
   const [adminSubTab, setAdminSubTab] = useState('products');
-  const [profileSubTab, setProfileSubTab] = useState('orders'); // 'orders' | 'favorites' | 'settings'
+  const [profileSubTab, setProfileSubTab] = useState('orders');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [toast, setToast] = useState(null);
@@ -141,7 +148,6 @@ export default function App() {
     setTimeout(() => setToast(null), 4000);
   };
 
-  // 1. Авторизація та синхронізація профілю
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       handleAuthChange(session?.user || null);
@@ -164,10 +170,8 @@ export default function App() {
         setIsEditorMode(false);
       }
 
-      // Завантажуємо та об'єднуємо дані профілю
       try {
         const { data: profile } = await supabase.from('profiles').select('*').eq('id', currentUser.id).single();
-        
         let mergedCart = [...cart];
         let mergedFavs = [...favorites];
 
@@ -202,7 +206,6 @@ export default function App() {
         localStorage.setItem('meat_store_cart', JSON.stringify(mergedCart));
         localStorage.setItem('meat_store_favs', JSON.stringify(mergedFavs));
 
-        // Оновлюємо профіль у Supabase
         await supabase.from('profiles').upsert({
           id: currentUser.id,
           email: currentUser.email,
@@ -211,7 +214,6 @@ export default function App() {
           updated_at: new Date().toISOString()
         });
 
-        // Завантажуємо історію замовлень саме цього клієнта
         const { data: userOrders } = await supabase.from('orders').select('*').or(`user_id.eq.${currentUser.id},customer_email.eq.${currentUser.email}`).order('created_at', { ascending: false });
         if (userOrders) setMyOrders(userOrders);
 
@@ -225,7 +227,6 @@ export default function App() {
     }
   };
 
-  // Збереження кошика в localStorage та хмару
   useEffect(() => {
     localStorage.setItem('meat_store_cart', JSON.stringify(cart));
     if (user) {
@@ -233,7 +234,6 @@ export default function App() {
     }
   }, [cart, user]);
 
-  // Збереження обраного в localStorage та хмару
   useEffect(() => {
     localStorage.setItem('meat_store_favs', JSON.stringify(favorites));
     if (user) {
@@ -285,8 +285,11 @@ export default function App() {
         let loadedAdvantages = ['ЕКОЛОГІЧНО ЧИСТА СИРОВИНА', 'ВЛАСНЕ КОПТИЛЬНЕ ВИРОБНИЦТВО НА ДРОВАХ'];
         if (Array.isArray(settData.advantages) && settData.advantages.length > 0) {
           loadedAdvantages = settData.advantages;
-        } else if (settData.advantage1 || settData.advantage2) {
-          loadedAdvantages = [settData.advantage1, settData.advantage2].filter(Boolean);
+        }
+
+        let loadedCategories = DEFAULT_CATEGORIES;
+        if (Array.isArray(settData.categories) && settData.categories.length > 0) {
+          loadedCategories = settData.categories;
         }
 
         setSiteSettings(prev => ({
@@ -297,6 +300,7 @@ export default function App() {
           bannerTitle: settData.banner_title || prev.bannerTitle,
           bannerDesc: settData.banner_desc || prev.bannerDesc,
           advantages: loadedAdvantages,
+          categories: loadedCategories,
           contactPhone: settData.contact_phone || DEFAULT_PHONE,
           contactTelegram: settData.contact_telegram || DEFAULT_PHONE,
           contactWhatsapp: settData.contact_whatsapp || DEFAULT_PHONE_RAW,
@@ -327,6 +331,7 @@ export default function App() {
     }
   };
 
+  // Переваги
   const handleAddAdvantage = async (textToCopy = 'НОВА ПЕРЕВАГА') => {
     const currentList = siteSettings.advantages || [];
     const updated = [...currentList, textToCopy];
@@ -334,11 +339,7 @@ export default function App() {
     showToast('Перевагу додано!', 'success');
 
     if (isAdmin) {
-      await supabase.from('site_settings').upsert({
-        id: 1,
-        ...siteSettings,
-        advantages: updated
-      });
+      await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, advantages: updated });
     }
   };
 
@@ -348,11 +349,7 @@ export default function App() {
     setSiteSettings(prev => ({ ...prev, advantages: currentList }));
 
     if (isAdmin) {
-      await supabase.from('site_settings').upsert({
-        id: 1,
-        ...siteSettings,
-        advantages: currentList
-      });
+      await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, advantages: currentList });
     }
   };
 
@@ -362,14 +359,45 @@ export default function App() {
     showToast('Перевагу видалено', 'info');
 
     if (isAdmin) {
-      await supabase.from('site_settings').upsert({
-        id: 1,
-        ...siteSettings,
-        advantages: currentList
-      });
+      await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, advantages: currentList });
     }
   };
 
+  // Категорії
+  const handleAddCategory = async (nameToCopy = 'Нова категорія') => {
+    const currentList = siteSettings.categories || DEFAULT_CATEGORIES;
+    const newCatId = 'cat_' + Date.now();
+    const updated = [...currentList, { id: newCatId, name: nameToCopy }];
+    setSiteSettings(prev => ({ ...prev, categories: updated }));
+    showToast('Категорію додано!', 'success');
+
+    if (isAdmin) {
+      await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, categories: updated });
+    }
+  };
+
+  const handleUpdateCategory = async (catId, newName) => {
+    const currentList = (siteSettings.categories || DEFAULT_CATEGORIES).map(c => c.id === catId ? { ...c, name: newName } : c);
+    setSiteSettings(prev => ({ ...prev, categories: currentList }));
+
+    if (isAdmin) {
+      await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, categories: currentList });
+    }
+  };
+
+  const handleDeleteCategory = async (catId) => {
+    if (catId === 'all') return;
+    const currentList = (siteSettings.categories || DEFAULT_CATEGORIES).filter(c => c.id !== catId);
+    setSiteSettings(prev => ({ ...prev, categories: currentList }));
+    if (selectedCategory === catId) setSelectedCategory('all');
+    showToast('Категорію видалено', 'info');
+
+    if (isAdmin) {
+      await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, categories: currentList });
+    }
+  };
+
+  // Товари
   const handleInlineProductUpdate = async (productId, field, value) => {
     const updatedProducts = products.map(p => p.id === productId ? { ...p, [field]: value } : p);
     setProducts(updatedProducts);
@@ -378,6 +406,7 @@ export default function App() {
     if (target) {
       await supabase.from('products').update({
         name: target.name,
+        category: target.category,
         price: parseFloat(target.price) || 0,
         unit: target.unit,
         description: target.description,
@@ -464,8 +493,15 @@ export default function App() {
     showToast(editingProduct ? 'Товар оновлено!' : 'Товар додано!');
     setEditingProduct(null);
     setProductForm({
-      name: '', category: 'sausages', price: '', unit: 'кг',
-      description: '', image: '', available: true, weightStep: 0.1, minWeight: 0.2
+      name: '', 
+      category: (siteSettings.categories?.find(c => c.id !== 'all')?.id) || 'sausages', 
+      price: '', 
+      unit: 'кг',
+      description: '', 
+      image: '', 
+      available: true, 
+      weightStep: 0.1, 
+      minWeight: 0.2
     });
     fetchData();
   };
@@ -480,7 +516,6 @@ export default function App() {
     fetchData();
   };
 
-  // Оформлення замовлення
   const handlePlaceOrder = async (e) => {
     e.preventDefault();
     if (cart.length === 0) return showToast('Кошик порожній!', 'error');
@@ -504,7 +539,6 @@ export default function App() {
       return;
     }
 
-    // Зберігаємо профіль користувача
     if (user) {
       await supabase.from('profiles').upsert({
         id: user.id,
@@ -564,6 +598,8 @@ export default function App() {
   };
   const getWhatsappLink = (p) => `https://wa.me/${(p || DEFAULT_PHONE_RAW).replace(/[+\s()]/g, '')}`;
   const getViberLink = (p) => `viber://chat?number=%2B${(p || DEFAULT_PHONE_RAW).replace(/[+\s()]/g, '')}`;
+
+  const availableCategoriesList = (siteSettings.categories || DEFAULT_CATEGORIES).filter(c => c.id !== 'all');
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans pb-20 selection:bg-red-800 selection:text-white">
@@ -735,7 +771,7 @@ export default function App() {
                   </p>
                 )}
 
-                {/* Динамічний блок переваг */}
+                {/* Переваги */}
                 <div className="flex flex-wrap items-center gap-3 text-[11px] font-bold tracking-wider uppercase text-zinc-300 pt-3">
                   {(siteSettings.advantages || []).map((adv, idx) => (
                     <div 
@@ -787,9 +823,9 @@ export default function App() {
               </div>
             </div>
 
-            {/* Пошук та фільтри */}
-            <div className="flex flex-col sm:flex-row gap-4 justify-between items-center mb-8">
-              <div className="relative w-full sm:w-96">
+            {/* Пошук та Динамічні категорії */}
+            <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center mb-8">
+              <div className="relative w-full sm:w-80 shrink-0">
                 <Search className="w-5 h-5 text-zinc-500 absolute left-3 top-3" />
                 <input
                   type="text"
@@ -800,24 +836,65 @@ export default function App() {
                 />
               </div>
 
-              <div className="flex gap-2 overflow-x-auto w-full sm:w-auto pb-2 sm:pb-0">
-                {[
-                  { id: 'all', name: 'Усе меню' },
-                  { id: 'sausages', name: 'Ковбаси' },
-                  { id: 'delicacies', name: 'Делікатеси' },
-                  { id: 'fresh_meat', name: 'Свіже м’ясо' },
-                  { id: 'semi_finished', name: 'Напівфабрикати' }
-                ].map(cat => (
+              {/* Панель категорій із підтримкою редагування на місці */}
+              <div className="flex items-center gap-2 overflow-x-auto w-full pb-2 sm:pb-0 scrollbar-none">
+                {(siteSettings.categories || DEFAULT_CATEGORIES).map(cat => {
+                  const isSelected = selectedCategory === cat.id;
+
+                  return (
+                    <div key={cat.id} className="relative shrink-0 flex items-center">
+                      {isEditorMode ? (
+                        <div className="flex items-center gap-1 bg-zinc-900 border border-dashed border-amber-500/60 p-1 rounded-xl">
+                          <input
+                            type="text"
+                            value={cat.name}
+                            onChange={(e) => handleUpdateCategory(cat.id, e.target.value)}
+                            className="bg-zinc-950 text-amber-400 text-xs font-bold px-2 py-1.5 rounded-lg focus:outline-none w-28 text-center"
+                          />
+                          {cat.id !== 'all' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleAddCategory(cat.name)}
+                                title="Дублювати категорію"
+                                className="p-1 hover:bg-zinc-800 text-zinc-400 hover:text-amber-400 rounded"
+                              >
+                                <Copy className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteCategory(cat.id)}
+                                title="Видалити категорію"
+                                className="p-1 hover:bg-red-950 text-zinc-500 hover:text-red-400 rounded"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setSelectedCategory(cat.id)}
+                          className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${
+                            isSelected ? 'bg-amber-500 text-zinc-950 border-amber-500 shadow-md shadow-amber-500/10' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                          }`}
+                        >
+                          {cat.name}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {isEditorMode && (
                   <button
-                    key={cat.id}
-                    onClick={() => setSelectedCategory(cat.id)}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${
-                      selectedCategory === cat.id ? 'bg-amber-500 text-zinc-950 border-amber-500' : 'bg-zinc-900 border-zinc-800 text-zinc-400'
-                    }`}
+                    type="button"
+                    onClick={() => handleAddCategory('Нова категорія')}
+                    className="flex items-center gap-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-dashed border-amber-500/50 px-3 py-2 rounded-xl text-xs font-bold shrink-0 transition-all"
                   >
-                    {cat.name}
+                    <Plus className="w-3.5 h-3.5" /> Категорія
                   </button>
-                ))}
+                )}
               </div>
             </div>
 
@@ -831,7 +908,6 @@ export default function App() {
                     <div className="h-56 bg-zinc-950 relative overflow-hidden">
                       <img src={formatImageUrl(p.image)} alt={p.name} className="w-full h-full object-cover" />
                       
-                      {/* Кнопка "В обране" */}
                       <button
                         onClick={() => toggleFavorite(p.id)}
                         className={`absolute top-4 right-4 p-2.5 rounded-full backdrop-blur-md border transition-all z-10 ${
@@ -844,7 +920,6 @@ export default function App() {
                         <Heart className={`w-4 h-4 ${isFav ? 'fill-red-500' : ''}`} />
                       </button>
 
-                      {/* Кнопка зміни фото в режимі редактора */}
                       {isEditorMode && (
                         <label 
                           htmlFor={`photo-upload-${p.id}`}
@@ -879,6 +954,18 @@ export default function App() {
                               className="w-full bg-zinc-950 text-white font-bold font-serif text-base border border-dashed border-amber-500 rounded p-1.5 focus:outline-none"
                               placeholder="Назва товару"
                             />
+                            
+                            {/* Селектор категорії для товару */}
+                            <select
+                              value={p.category}
+                              onChange={(e) => handleInlineProductUpdate(p.id, 'category', e.target.value)}
+                              className="w-full bg-zinc-950 text-amber-400 text-xs font-bold border border-dashed border-amber-500 rounded p-1.5 focus:outline-none"
+                            >
+                              {availableCategoriesList.map(cat => (
+                                <option key={cat.id} value={cat.id}>{cat.name}</option>
+                              ))}
+                            </select>
+
                             <textarea
                               value={p.description || ''}
                               onChange={(e) => handleInlineProductUpdate(p.id, 'description', e.target.value)}
@@ -1049,7 +1136,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Вкладка замовлень клієнта */}
             {profileSubTab === 'orders' && (
               <div className="space-y-4">
                 {myOrders.length === 0 ? (
@@ -1091,7 +1177,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Вкладка обраного в кабінеті */}
             {profileSubTab === 'favorites' && (
               <div>
                 {favorites.length === 0 ? (
@@ -1183,10 +1268,9 @@ export default function App() {
                       onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
                       className="bg-zinc-950 border border-zinc-800 p-3 rounded-xl text-sm text-zinc-300"
                     >
-                      <option value="sausages">Ковбаси</option>
-                      <option value="delicacies">Делікатеси</option>
-                      <option value="fresh_meat">Свіже м’ясо</option>
-                      <option value="semi_finished">Напівфабрикати</option>
+                      {availableCategoriesList.map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
                     </select>
                   </div>
 
@@ -1217,7 +1301,7 @@ export default function App() {
                     {editingProduct && (
                       <button 
                         type="button" 
-                        onClick={() => { setEditingProduct(null); setProductForm({ name: '', category: 'sausages', price: '', unit: 'кг', description: '', image: '', available: true, weightStep: 0.1, minWeight: 0.2 }); }} 
+                        onClick={() => { setEditingProduct(null); setProductForm({ name: '', category: (siteSettings.categories?.find(c => c.id !== 'all')?.id) || 'sausages', price: '', unit: 'кг', description: '', image: '', available: true, weightStep: 0.1, minWeight: 0.2 }); }} 
                         className="flex-1 bg-zinc-800 py-3 rounded-xl text-xs font-bold"
                       >
                         Скасувати
@@ -1328,7 +1412,7 @@ export default function App() {
         )}
       </main>
 
-      {/* Модалка після оформлення замовлення */}
+      {/* Модалка підтвердження замовлення */}
       {lastPlacedOrder && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50">
           <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl w-full max-w-lg shadow-2xl">
