@@ -13,8 +13,7 @@ import {
   Phone, 
   Image as ImageIcon,
   LogIn,
-  LogOut,
-  User
+  LogOut
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
@@ -22,6 +21,9 @@ const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || '')
   .split(',')
   .map(e => e.trim().toLowerCase())
   .filter(Boolean);
+
+const DEFAULT_PHONE = '+380984536052';
+const DEFAULT_PHONE_RAW = '380984536052';
 
 const formatImageUrl = (url) => {
   if (!url) return 'https://images.unsplash.com/photo-1602491453979-53a99888ecf1?auto=format&fit=crop&q=80&w=600';
@@ -47,7 +49,14 @@ const compressImage = (file, maxWidth = 900, quality = 0.75) => {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', quality));
+        canvas.toBlob(
+          (blob) => {
+            if (blob) resolve(blob);
+            else reject(new Error('Compression error'));
+          },
+          'image/jpeg',
+          quality
+        );
       };
       img.onerror = (err) => reject(err);
     };
@@ -70,9 +79,10 @@ export default function App() {
     bannerDesc: 'Замовляйте свіжі делікатеси, натуральні ковбаси та соковите мариноване м\'ясо до вашого столу.',
     advantage1: 'ЕКОЛОГІЧНО ЧИСТА СИРОВИНА',
     advantage2: 'ВЛАСНЕ КОПТИЛЬНЕ ВИРОБНИЦТВО НА ДРОВАХ',
-    contactPhone: '+380984536052',
-    contactTelegram: 'vash_username',
-    contactWhatsapp: '380984536052'
+    contactPhone: DEFAULT_PHONE,
+    contactTelegram: DEFAULT_PHONE,
+    contactWhatsapp: DEFAULT_PHONE_RAW,
+    contactViber: DEFAULT_PHONE
   });
 
   const [cart, setCart] = useState([]);
@@ -111,7 +121,6 @@ export default function App() {
     setTimeout(() => setToast(null), 4000);
   };
 
-  // 1. Авторизація Supabase Auth
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       handleAuthChange(session?.user || null);
@@ -153,7 +162,6 @@ export default function App() {
     showToast('Ви вийшли з облікового запису', 'info');
   };
 
-  // 2. Завантаження даних із Supabase
   const fetchData = async () => {
     try {
       const { data: prodData } = await supabase.from('products').select('*');
@@ -174,18 +182,20 @@ export default function App() {
 
       const { data: settData } = await supabase.from('site_settings').select('*').single();
       if (settData) {
-        setSiteSettings({
-          title: settData.title,
-          subtitle: settData.subtitle,
-          bannerBadge: settData.banner_badge,
-          bannerTitle: settData.banner_title,
-          bannerDesc: settData.banner_desc,
-          advantage1: settData.advantage1,
-          advantage2: settData.advantage2,
-          contactPhone: settData.contact_phone,
-          contactTelegram: settData.contact_telegram,
-          contactWhatsapp: settData.contact_whatsapp
-        });
+        setSiteSettings(prev => ({
+          ...prev,
+          title: settData.title || prev.title,
+          subtitle: settData.subtitle || prev.subtitle,
+          bannerBadge: settData.banner_badge || prev.bannerBadge,
+          bannerTitle: settData.banner_title || prev.bannerTitle,
+          bannerDesc: settData.banner_desc || prev.bannerDesc,
+          advantage1: settData.advantage1 || prev.advantage1,
+          advantage2: settData.advantage2 || prev.advantage2,
+          contactPhone: settData.contact_phone || DEFAULT_PHONE,
+          contactTelegram: settData.contact_telegram || DEFAULT_PHONE,
+          contactWhatsapp: settData.contact_whatsapp || DEFAULT_PHONE_RAW,
+          contactViber: settData.contact_viber || DEFAULT_PHONE
+        }));
       }
 
       const { data: ordData } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
@@ -199,7 +209,6 @@ export default function App() {
     fetchData();
   }, []);
 
-  // 3. Збереження налаштувань
   const handleTextChange = async (key, newValue) => {
     const updated = { ...siteSettings, [key]: newValue };
     setSiteSettings(updated);
@@ -216,12 +225,12 @@ export default function App() {
         advantage2: updated.advantage2,
         contact_phone: updated.contactPhone,
         contact_telegram: updated.contactTelegram,
-        contact_whatsapp: updated.contactWhatsapp
+        contact_whatsapp: updated.contactWhatsapp,
+        contact_viber: updated.contactViber
       });
     }
   };
 
-  // 4. Обробка файлів (без зависань та білих екранів)
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -232,16 +241,33 @@ export default function App() {
     }
 
     try {
-      showToast('Оптимізація зображення...', 'info');
-      const compressed = await compressImage(file, 900, 0.75);
-      setProductForm(prev => ({ ...prev, image: compressed }));
+      showToast('Стиснення та завантаження у Storage...', 'info');
+      const compressedBlob = await compressImage(file, 900, 0.75);
+      const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
+      const filePath = `products/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('product-images')
+        .upload(filePath, compressedBlob, { 
+          contentType: 'image/jpeg',
+          cacheControl: '31536000',
+          upsert: false 
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('product-images')
+        .getPublicUrl(filePath);
+
+      setProductForm(prev => ({ ...prev, image: publicUrl }));
       showToast('Фото успішно завантажено!', 'success');
     } catch (err) {
-      showToast('Помилка обробки фото', 'error');
+      console.error('Помилка завантаження фото:', err);
+      showToast(`Помилка: ${err.message}`, 'error');
     }
   };
 
-  // 5. Робота з товарами в Supabase
   const handleSaveProduct = async (e) => {
     e.preventDefault();
     if (!productForm.name || !productForm.price) {
@@ -287,7 +313,6 @@ export default function App() {
     fetchData();
   };
 
-  // 6. Оформлення замовлення
   const handlePlaceOrder = async (e) => {
     e.preventDefault();
     if (cart.length === 0) return showToast('Кошик порожній!', 'error');
@@ -322,8 +347,24 @@ export default function App() {
       showToast(`Помилка: ${error.message}`, 'error');
       return;
     }
-    showToast(`Статус замовлення оновлено`);
+    showToast('Статус замовлення оновлено');
     fetchData();
+  };
+
+  const generateOrderMessage = (order) => {
+    if (!order) return "";
+    let itemsText = order.items.map((item, idx) => 
+      `${idx + 1}. ${item.name} (${item.quantity} ${item.unit} x ${item.price} грн) = ${(item.quantity * item.price).toFixed(2)} грн`
+    ).join('\n');
+
+    return `*Нове замовлення ${order.id}* від ${order.date}\n\n` +
+           `👤 *Покупець:* ${order.customer.name}\n` +
+           `📞 *Телефон:* ${order.customer.phone}\n` +
+           `🚚 *Доставка:* ${order.customer.deliveryType === 'pickup' ? 'Самовивіз' : 'Адресна (' + order.customer.address + ')'}\n` +
+           `💳 *Оплата:* ${order.customer.paymentType === 'cash' ? 'Готівка' : 'Термінал'}\n` +
+           `💬 *Коментар:* ${order.customer.comment || '-'}\n\n` +
+           `*Замовлені вироби:*\n${itemsText}\n\n` +
+           `💰 *Загальна сума:* *${order.total.toFixed(2)} грн*`;
   };
 
   const filteredProducts = products.filter(product => {
@@ -333,8 +374,13 @@ export default function App() {
     return matchesCategory && matchesSearch;
   });
 
-  const getTelegramLink = (u) => u?.startsWith('+') ? `https://t.me/${u}` : `https://t.me/${u?.replace('@', '')}`;
-  const getWhatsappLink = (p) => `https://wa.me/${p?.replace(/[+\s()]/g, '')}`;
+  const getTelegramLink = (u) => {
+    if (!u) return `https://t.me/+380984536052`;
+    const clean = u.replace('@', '').trim();
+    return clean.startsWith('+') || /^\d+$/.test(clean) ? `https://t.me/${clean.startsWith('+') ? clean : '+' + clean}` : `https://t.me/${clean}`;
+  };
+  const getWhatsappLink = (p) => `https://wa.me/${(p || DEFAULT_PHONE_RAW).replace(/[+\s()]/g, '')}`;
+  const getViberLink = (p) => `viber://chat?number=%2B${(p || DEFAULT_PHONE_RAW).replace(/[+\s()]/g, '')}`;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans pb-20 selection:bg-red-800 selection:text-white">
@@ -592,7 +638,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Панель керування (Адмінка) */}
+        {/* Адмінка */}
         {activeTab === 'admin' && isAdmin && (
           <div className="space-y-8">
             <div className="flex gap-2 border-b border-zinc-800 pb-4">
@@ -607,6 +653,12 @@ export default function App() {
                 className={`px-4 py-2 rounded-xl text-xs font-bold ${adminSubTab === 'orders' ? 'bg-zinc-800 text-white' : 'text-zinc-500'}`}
               >
                 Замовлення ({orders.length})
+              </button>
+              <button 
+                onClick={() => setAdminSubTab('contacts')} 
+                className={`px-4 py-2 rounded-xl text-xs font-bold ${adminSubTab === 'contacts' ? 'bg-zinc-800 text-white' : 'text-zinc-500'}`}
+              >
+                Контакти & Месенджери
               </button>
             </div>
 
@@ -646,12 +698,12 @@ export default function App() {
                     <label className="text-xs text-zinc-400 block mb-2 flex items-center justify-between">
                       <span>Зображення</span>
                       <label htmlFor="file-upload" className="cursor-pointer text-amber-500 hover:underline flex items-center gap-1 font-bold">
-                        <ImageIcon className="w-4 h-4" /> Завантажити з фото
+                        <ImageIcon className="w-4 h-4" /> Завантажити фото
                       </label>
                     </label>
                     <input id="file-upload" type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
                     <input
-                      placeholder="URL або Base64"
+                      placeholder="URL фото або оберіть файл"
                       value={productForm.image}
                       onChange={(e) => setProductForm({ ...productForm, image: e.target.value })}
                       className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl text-xs"
@@ -659,7 +711,7 @@ export default function App() {
                   </div>
 
                   <textarea
-                    placeholder="Опис"
+                    placeholder="Опис товару"
                     value={productForm.description}
                     onChange={(e) => setProductForm({ ...productForm, description: e.target.value })}
                     className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl text-sm h-20"
@@ -738,28 +790,115 @@ export default function App() {
                 ))}
               </div>
             )}
+
+            {adminSubTab === 'contacts' && (
+              <div className="max-w-2xl bg-zinc-900 p-6 rounded-3xl border border-zinc-800 space-y-4">
+                <h3 className="text-lg font-bold font-serif mb-4">Налаштування контактів</h3>
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Номер телефону для дзвінків</label>
+                  <input
+                    value={siteSettings.contactPhone}
+                    onChange={(e) => handleTextChange('contactPhone', e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Telegram (Телефон або Username)</label>
+                  <input
+                    value={siteSettings.contactTelegram}
+                    onChange={(e) => handleTextChange('contactTelegram', e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">WhatsApp (лише цифри)</label>
+                  <input
+                    value={siteSettings.contactWhatsapp}
+                    onChange={(e) => handleTextChange('contactWhatsapp', e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Viber (номер телефону)</label>
+                  <input
+                    value={siteSettings.contactViber}
+                    onChange={(e) => handleTextChange('contactViber', e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl text-sm"
+                  />
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>
 
-      {/* Floating кнопка швидкого зв'язку */}
+      {/* Модалка після оформлення замовлення */}
+      {lastPlacedOrder && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50">
+          <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl w-full max-w-lg shadow-2xl">
+            <h3 className="text-2xl font-bold text-white mb-2 font-serif text-center">Замовлення прийнято! 🥩</h3>
+            <p className="text-xs text-center text-zinc-400 mb-6">
+              Номер замовлення: <b className="text-white">{lastPlacedOrder.id}</b>. Надішліть копію у зручний месенджер:
+            </p>
+
+            <div className="space-y-2.5">
+              <a
+                href={`${getTelegramLink(siteSettings.contactTelegram)}?text=${encodeURIComponent(generateOrderMessage(lastPlacedOrder))}`}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-wider flex items-center justify-center gap-2"
+              >
+                <Send className="w-4 h-4" /> Надіслати в Telegram
+              </a>
+              <a
+                href={`${getWhatsappLink(siteSettings.contactWhatsapp)}?text=${encodeURIComponent(generateOrderMessage(lastPlacedOrder))}`}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-wider flex items-center justify-center gap-2"
+              >
+                <MessageSquare className="w-4 h-4" /> Надіслати у WhatsApp
+              </a>
+              <a
+                href={`viber://chat?number=%2B${(siteSettings.contactViber || DEFAULT_PHONE_RAW).replace(/[+\s()]/g, '')}`}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full bg-purple-700 hover:bg-purple-600 text-white font-bold py-3 rounded-xl text-xs uppercase tracking-wider flex items-center justify-center gap-2"
+              >
+                <Phone className="w-4 h-4" /> Відкрити у Viber
+              </a>
+              <button
+                type="button"
+                onClick={() => setLastPlacedOrder(null)}
+                className="w-full bg-zinc-800 hover:bg-zinc-750 text-zinc-300 py-3 rounded-xl text-xs font-bold mt-3"
+              >
+                Закрити
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Плаваюче меню швидкого зв'язку */}
       <div className="fixed bottom-6 right-6 z-40">
         {showContactMenu && (
-          <div className="mb-3 flex flex-col gap-2 bg-zinc-900 border border-zinc-800 p-3 rounded-2xl shadow-2xl text-xs font-bold w-44">
-            <a href={`tel:${siteSettings.contactPhone}`} className="p-2 hover:bg-zinc-800 rounded-lg flex items-center gap-2">
+          <div className="mb-3 flex flex-col gap-1.5 bg-zinc-900 border border-zinc-800 p-3 rounded-2xl shadow-2xl text-xs font-bold w-44">
+            <a href={`tel:${siteSettings.contactPhone}`} className="p-2 hover:bg-zinc-800 rounded-lg flex items-center gap-2.5 text-zinc-200">
               <Phone className="w-4 h-4 text-emerald-500" /> Дзвінок
             </a>
-            <a href={getTelegramLink(siteSettings.contactTelegram)} target="_blank" rel="noreferrer" className="p-2 hover:bg-zinc-800 rounded-lg flex items-center gap-2">
+            <a href={getTelegramLink(siteSettings.contactTelegram)} target="_blank" rel="noreferrer" className="p-2 hover:bg-zinc-800 rounded-lg flex items-center gap-2.5 text-zinc-200">
               <Send className="w-4 h-4 text-sky-400" /> Telegram
             </a>
-            <a href={getWhatsappLink(siteSettings.contactWhatsapp)} target="_blank" rel="noreferrer" className="p-2 hover:bg-zinc-800 rounded-lg flex items-center gap-2">
+            <a href={getWhatsappLink(siteSettings.contactWhatsapp)} target="_blank" rel="noreferrer" className="p-2 hover:bg-zinc-800 rounded-lg flex items-center gap-2.5 text-zinc-200">
               <MessageSquare className="w-4 h-4 text-emerald-400" /> WhatsApp
+            </a>
+            <a href={getViberLink(siteSettings.contactViber)} target="_blank" rel="noreferrer" className="p-2 hover:bg-zinc-800 rounded-lg flex items-center gap-2.5 text-zinc-200">
+              <Phone className="w-4 h-4 text-purple-400" /> Viber
             </a>
           </div>
         )}
         <button
           onClick={() => setShowContactMenu(!showContactMenu)}
-          className="w-14 h-14 rounded-full bg-gradient-to-r from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-2xl"
+          className="w-14 h-14 rounded-full bg-gradient-to-r from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-2xl transition-transform active:scale-95"
         >
           <MessageSquare className="w-6 h-6" />
         </button>
