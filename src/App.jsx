@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShoppingBag, 
   Settings, 
@@ -12,11 +12,16 @@ import {
   MessageSquare, 
   Phone, 
   Image as ImageIcon,
-  LogIn,
-  LogOut,
-  Upload,
-  Copy,
-  X
+  LogIn, 
+  LogOut, 
+  Upload, 
+  Copy, 
+  X,
+  Heart,
+  User,
+  Package,
+  Clock,
+  MapPin
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
@@ -74,6 +79,13 @@ export default function App() {
 
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [myOrders, setMyOrders] = useState([]);
+  const [favorites, setFavorites] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('meat_store_favs') || '[]');
+    } catch { return []; }
+  });
+
   const [siteSettings, setSiteSettings] = useState({
     title: 'М\'ЯСНИЙ КРАФТ',
     subtitle: 'Традиційні м\'ясні вироби за рецептами визвольного руху',
@@ -87,9 +99,15 @@ export default function App() {
     contactViber: DEFAULT_PHONE
   });
 
-  const [cart, setCart] = useState([]);
-  const [activeTab, setActiveTab] = useState('shop');
+  const [cart, setCart] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('meat_store_cart') || '[]');
+    } catch { return []; }
+  });
+
+  const [activeTab, setActiveTab] = useState('shop'); // 'shop' | 'cart' | 'profile' | 'admin'
   const [adminSubTab, setAdminSubTab] = useState('products');
+  const [profileSubTab, setProfileSubTab] = useState('orders'); // 'orders' | 'favorites' | 'settings'
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [toast, setToast] = useState(null);
@@ -123,6 +141,7 @@ export default function App() {
     setTimeout(() => setToast(null), 4000);
   };
 
+  // 1. Авторизація та синхронізація профілю
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       handleAuthChange(session?.user || null);
@@ -135,7 +154,7 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const handleAuthChange = (currentUser) => {
+  const handleAuthChange = async (currentUser) => {
     setUser(currentUser);
     if (currentUser?.email) {
       const email = currentUser.email.toLowerCase();
@@ -144,10 +163,89 @@ export default function App() {
       if (currentUser && !hasAdminRights) {
         setIsEditorMode(false);
       }
+
+      // Завантажуємо та об'єднуємо дані профілю
+      try {
+        const { data: profile } = await supabase.from('profiles').select('*').eq('id', currentUser.id).single();
+        
+        let mergedCart = [...cart];
+        let mergedFavs = [...favorites];
+
+        if (profile) {
+          if (Array.isArray(profile.cart) && profile.cart.length > 0) {
+            const combinedMap = new Map();
+            [...profile.cart, ...cart].forEach(item => {
+              if (combinedMap.has(item.id)) {
+                const existing = combinedMap.get(item.id);
+                combinedMap.set(item.id, { ...existing, quantity: parseFloat((existing.quantity + item.quantity).toFixed(2)) });
+              } else {
+                combinedMap.set(item.id, item);
+              }
+            });
+            mergedCart = Array.from(combinedMap.values());
+          }
+
+          if (Array.isArray(profile.favorites)) {
+            mergedFavs = Array.from(new Set([...mergedFavs, ...profile.favorites]));
+          }
+
+          setCheckoutForm(prev => ({
+            ...prev,
+            name: profile.name || prev.name,
+            phone: profile.phone || prev.phone,
+            address: profile.address || prev.address
+          }));
+        }
+
+        setCart(mergedCart);
+        setFavorites(mergedFavs);
+        localStorage.setItem('meat_store_cart', JSON.stringify(mergedCart));
+        localStorage.setItem('meat_store_favs', JSON.stringify(mergedFavs));
+
+        // Оновлюємо профіль у Supabase
+        await supabase.from('profiles').upsert({
+          id: currentUser.id,
+          email: currentUser.email,
+          cart: mergedCart,
+          favorites: mergedFavs,
+          updated_at: new Date().toISOString()
+        });
+
+        // Завантажуємо історію замовлень саме цього клієнта
+        const { data: userOrders } = await supabase.from('orders').select('*').or(`user_id.eq.${currentUser.id},customer_email.eq.${currentUser.email}`).order('created_at', { ascending: false });
+        if (userOrders) setMyOrders(userOrders);
+
+      } catch (err) {
+        console.error('Помилка завантаження профілю:', err);
+      }
     } else {
       setIsAdmin(false);
       setIsEditorMode(false);
+      setMyOrders([]);
     }
+  };
+
+  // Збереження кошика в localStorage та хмару
+  useEffect(() => {
+    localStorage.setItem('meat_store_cart', JSON.stringify(cart));
+    if (user) {
+      supabase.from('profiles').update({ cart, updated_at: new Date().toISOString() }).eq('id', user.id).then();
+    }
+  }, [cart, user]);
+
+  // Збереження обраного в localStorage та хмару
+  useEffect(() => {
+    localStorage.setItem('meat_store_favs', JSON.stringify(favorites));
+    if (user) {
+      supabase.from('profiles').update({ favorites, updated_at: new Date().toISOString() }).eq('id', user.id).then();
+    }
+  }, [favorites, user]);
+
+  const toggleFavorite = (productId) => {
+    const isFav = favorites.includes(productId);
+    const updated = isFav ? favorites.filter(id => id !== productId) : [...favorites, productId];
+    setFavorites(updated);
+    showToast(isFav ? 'Видалено з обраного' : 'Додано в обране! ❤️');
   };
 
   const handleGoogleLogin = async () => {
@@ -217,7 +315,6 @@ export default function App() {
     fetchData();
   }, []);
 
-  // Збереження глобальних текстових налаштувань
   const handleTextChange = async (key, newValue) => {
     const updated = { ...siteSettings, [key]: newValue };
     setSiteSettings(updated);
@@ -225,41 +322,22 @@ export default function App() {
     if (isAdmin) {
       await supabase.from('site_settings').upsert({
         id: 1,
-        title: updated.title,
-        subtitle: updated.subtitle,
-        banner_badge: updated.bannerBadge,
-        banner_title: updated.bannerTitle,
-        banner_desc: updated.bannerDesc,
-        advantages: updated.advantages,
-        contact_phone: updated.contactPhone,
-        contact_telegram: updated.contactTelegram,
-        contact_whatsapp: updated.contactWhatsapp,
-        contact_viber: updated.contactViber
+        ...updated
       });
     }
   };
 
-  // Робота зі списком переваг (додавання/дублювання, редагування, видалення)
   const handleAddAdvantage = async (textToCopy = 'НОВА ПЕРЕВАГА') => {
     const currentList = siteSettings.advantages || [];
     const updated = [...currentList, textToCopy];
-    
     setSiteSettings(prev => ({ ...prev, advantages: updated }));
     showToast('Перевагу додано!', 'success');
 
     if (isAdmin) {
       await supabase.from('site_settings').upsert({
         id: 1,
-        title: siteSettings.title,
-        subtitle: siteSettings.subtitle,
-        banner_badge: siteSettings.bannerBadge,
-        banner_title: siteSettings.bannerTitle,
-        banner_desc: siteSettings.bannerDesc,
-        advantages: updated,
-        contact_phone: siteSettings.contactPhone,
-        contact_telegram: siteSettings.contactTelegram,
-        contact_whatsapp: siteSettings.contactWhatsapp,
-        contact_viber: siteSettings.contactViber
+        ...siteSettings,
+        advantages: updated
       });
     }
   };
@@ -267,73 +345,48 @@ export default function App() {
   const handleUpdateAdvantage = async (index, newText) => {
     const currentList = [...(siteSettings.advantages || [])];
     currentList[index] = newText;
-    
     setSiteSettings(prev => ({ ...prev, advantages: currentList }));
 
     if (isAdmin) {
       await supabase.from('site_settings').upsert({
         id: 1,
-        title: siteSettings.title,
-        subtitle: siteSettings.subtitle,
-        banner_badge: siteSettings.bannerBadge,
-        banner_title: siteSettings.bannerTitle,
-        banner_desc: siteSettings.bannerDesc,
-        advantages: currentList,
-        contact_phone: siteSettings.contactPhone,
-        contact_telegram: siteSettings.contactTelegram,
-        contact_whatsapp: siteSettings.contactWhatsapp,
-        contact_viber: siteSettings.contactViber
+        ...siteSettings,
+        advantages: currentList
       });
     }
   };
 
   const handleDeleteAdvantage = async (index) => {
     const currentList = (siteSettings.advantages || []).filter((_, i) => i !== index);
-    
     setSiteSettings(prev => ({ ...prev, advantages: currentList }));
     showToast('Перевагу видалено', 'info');
 
     if (isAdmin) {
       await supabase.from('site_settings').upsert({
         id: 1,
-        title: siteSettings.title,
-        subtitle: siteSettings.subtitle,
-        banner_badge: siteSettings.bannerBadge,
-        banner_title: siteSettings.bannerTitle,
-        banner_desc: siteSettings.bannerDesc,
-        advantages: currentList,
-        contact_phone: siteSettings.contactPhone,
-        contact_telegram: siteSettings.contactTelegram,
-        contact_whatsapp: siteSettings.contactWhatsapp,
-        contact_viber: siteSettings.contactViber
+        ...siteSettings,
+        advantages: currentList
       });
     }
   };
 
-  // Пряме оновлення полів товару з головної сторінки
   const handleInlineProductUpdate = async (productId, field, value) => {
-    const updatedProducts = products.map(p => {
-      if (p.id === productId) {
-        return { ...p, [field]: value };
-      }
-      return p;
-    });
+    const updatedProducts = products.map(p => p.id === productId ? { ...p, [field]: value } : p);
     setProducts(updatedProducts);
 
-    const targetProduct = updatedProducts.find(p => p.id === productId);
-    if (targetProduct) {
+    const target = updatedProducts.find(p => p.id === productId);
+    if (target) {
       await supabase.from('products').update({
-        name: targetProduct.name,
-        price: parseFloat(targetProduct.price) || 0,
-        unit: targetProduct.unit,
-        description: targetProduct.description,
-        available: targetProduct.available,
-        image: targetProduct.image
+        name: target.name,
+        price: parseFloat(target.price) || 0,
+        unit: target.unit,
+        description: target.description,
+        available: target.available,
+        image: target.image
       }).eq('id', productId);
     }
   };
 
-  // Завантаження фото безпосередньо для конкретного товару
   const handleDirectProductPhotoUpload = async (productId, e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -358,7 +411,6 @@ export default function App() {
     }
   };
 
-  // Завантаження фото через форму в адмінці
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -377,7 +429,7 @@ export default function App() {
 
       const { data: { publicUrl } } = supabase.storage.from('product-images').getPublicUrl(filePath);
       setProductForm(prev => ({ ...prev, image: publicUrl }));
-      showToast('Фото успішно додано!', 'success');
+      showToast('Фото додано!', 'success');
     } catch (err) {
       showToast(`Помилка: ${err.message}`, 'error');
     }
@@ -428,6 +480,7 @@ export default function App() {
     fetchData();
   };
 
+  // Оформлення замовлення
   const handlePlaceOrder = async (e) => {
     e.preventDefault();
     if (cart.length === 0) return showToast('Кошик порожній!', 'error');
@@ -440,18 +493,33 @@ export default function App() {
       customer: { ...checkoutForm },
       items: [...cart],
       total,
-      status: 'new'
+      status: 'new',
+      user_id: user ? user.id : null,
+      customer_email: user ? user.email : null
     };
 
     const { error } = await supabase.from('orders').insert([newOrder]);
     if (error) {
-      showToast(`Помилка створення замовлення: ${error.message}`, 'error');
+      showToast(`Помилка: ${error.message}`, 'error');
       return;
+    }
+
+    // Зберігаємо профіль користувача
+    if (user) {
+      await supabase.from('profiles').upsert({
+        id: user.id,
+        email: user.email,
+        name: checkoutForm.name,
+        phone: checkoutForm.phone,
+        address: checkoutForm.address,
+        cart: [],
+        updated_at: new Date().toISOString()
+      });
+      setMyOrders(prev => [newOrder, ...prev]);
     }
 
     setLastPlacedOrder(newOrder);
     setCart([]);
-    setCheckoutForm({ name: '', phone: '', address: '', deliveryType: 'pickup', paymentType: 'cash', comment: '' });
     showToast(`Замовлення ${newOrder.id} успішно прийнято!`);
     fetchData();
   };
@@ -475,7 +543,7 @@ export default function App() {
     return `*Нове замовлення ${order.id}* від ${order.date}\n\n` +
            `👤 *Покупець:* ${order.customer.name}\n` +
            `📞 *Телефон:* ${order.customer.phone}\n` +
-           `🚚 *Доставка:* ${order.customer.deliveryType === 'pickup' ? 'Самовивіз' : 'Адресна (' + order.customer.address + ')'}\n` +
+           `🚚 *Доставка:* ${order.customer.deliveryType === 'pickup' ? 'Самовивіз' : 'Адресна (' + (order.customer.address || '-') + ')'}\n` +
            `💳 *Оплата:* ${order.customer.paymentType === 'cash' ? 'Готівка' : 'Термінал'}\n` +
            `💬 *Коментар:* ${order.customer.comment || '-'}\n\n` +
            `*Замовлені вироби:*\n${itemsText}\n\n` +
@@ -575,6 +643,17 @@ export default function App() {
                 <ShoppingBag className="w-4 h-4" />
                 Кошик {cart.length > 0 && `(${cart.length})`}
               </button>
+
+              {user && (
+                <button 
+                  onClick={() => setActiveTab('profile')} 
+                  className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${activeTab === 'profile' ? 'bg-amber-500 text-zinc-950 shadow-md' : 'text-zinc-400 hover:text-white'}`}
+                >
+                  <User className="w-4 h-4" />
+                  Кабінет
+                </button>
+              )}
+
               {isAdmin && (
                 <button 
                   onClick={() => setActiveTab('admin')} 
@@ -587,7 +666,13 @@ export default function App() {
 
             {user ? (
               <div className="flex items-center gap-2 bg-zinc-900 py-1.5 px-3 rounded-xl border border-zinc-800">
-                <span className="text-xs text-zinc-300 font-mono hidden sm:inline">{user.email}</span>
+                <span 
+                  onClick={() => setActiveTab('profile')} 
+                  className="text-xs text-zinc-300 font-mono hidden sm:inline cursor-pointer hover:text-amber-400 transition-colors"
+                  title="Відкрити кабінет"
+                >
+                  {user.email}
+                </span>
                 <button onClick={handleLogout} title="Вийти" className="text-zinc-500 hover:text-red-400 p-1">
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -607,9 +692,11 @@ export default function App() {
 
       {/* Головний контент */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
+        
+        {/* 1. ВІТРИНА */}
         {activeTab === 'shop' && (
           <div>
-            {/* Банер із підтримкою повного редагування та динамічних переваг */}
+            {/* Банер */}
             <div className="rounded-3xl bg-gradient-to-r from-zinc-950 via-zinc-900 to-red-950 border border-zinc-900 p-8 sm:p-12 mb-10 shadow-2xl relative">
               <div className="relative z-10 max-w-3xl">
                 {isEditorMode ? (
@@ -648,15 +735,14 @@ export default function App() {
                   </p>
                 )}
 
-                {/* Динамічний блок переваг (бейджі) */}
+                {/* Динамічний блок переваг */}
                 <div className="flex flex-wrap items-center gap-3 text-[11px] font-bold tracking-wider uppercase text-zinc-300 pt-3">
-                  {(siteSettings.advantages || ['ЕКОЛОГІЧНО ЧИСТА СИРОВИНА', 'ВЛАСНЕ КОПТИЛЬНЕ ВИРОБНИЦТВО НА ДРОВАХ']).map((adv, idx) => (
+                  {(siteSettings.advantages || []).map((adv, idx) => (
                     <div 
                       key={idx} 
                       className="flex items-center gap-2 bg-zinc-900/90 px-3.5 py-2 rounded-xl border border-zinc-800 shadow-sm transition-all"
                     >
                       <span className="text-amber-500 font-bold">✓</span>
-                      
                       {isEditorMode ? (
                         <div className="flex items-center gap-1.5">
                           <input
@@ -664,23 +750,20 @@ export default function App() {
                             value={adv}
                             onChange={(e) => handleUpdateAdvantage(idx, e.target.value)}
                             className="bg-zinc-950 text-amber-400 border border-dashed border-amber-500/70 rounded px-2 py-1 text-xs font-bold focus:outline-none min-w-[200px]"
-                            placeholder="Текст переваги..."
                           />
-                          {/* Кнопка дублювання */}
                           <button
                             type="button"
                             onClick={() => handleAddAdvantage(adv)}
-                            title="Дублювати та написати щось ще"
-                            className="p-1 hover:bg-zinc-800 text-zinc-400 hover:text-amber-400 rounded transition-colors"
+                            title="Дублювати"
+                            className="p-1 hover:bg-zinc-800 text-zinc-400 hover:text-amber-400 rounded"
                           >
                             <Copy className="w-3.5 h-3.5" />
                           </button>
-                          {/* Кнопка видалення */}
                           <button
                             type="button"
                             onClick={() => handleDeleteAdvantage(idx)}
                             title="Видалити"
-                            className="p-1 hover:bg-red-950 text-zinc-500 hover:text-red-400 rounded transition-colors"
+                            className="p-1 hover:bg-red-950 text-zinc-500 hover:text-red-400 rounded"
                           >
                             <X className="w-3.5 h-3.5" />
                           </button>
@@ -691,7 +774,6 @@ export default function App() {
                     </div>
                   ))}
 
-                  {/* Кнопка додавання нового пункту в режимі редактора */}
                   {isEditorMode && (
                     <button
                       type="button"
@@ -705,7 +787,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Пошук та категорії */}
+            {/* Пошук та фільтри */}
             <div className="flex flex-col sm:flex-row gap-4 justify-between items-center mb-8">
               <div className="relative w-full sm:w-96">
                 <Search className="w-5 h-5 text-zinc-500 absolute left-3 top-3" />
@@ -739,129 +821,150 @@ export default function App() {
               </div>
             </div>
 
-            {/* Сітка товарів із підтримкою редагування прямо в картках */}
+            {/* Сітка товарів */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredProducts.map(p => (
-                <div key={p.id} className="bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-850 flex flex-col justify-between shadow-xl">
-                  {/* Зображення */}
-                  <div className="h-56 bg-zinc-950 relative overflow-hidden group">
-                    <img src={formatImageUrl(p.image)} alt={p.name} className="w-full h-full object-cover" />
-                    
-                    {/* Кнопка зміни фото в режимі редактора */}
-                    {isEditorMode && (
-                      <label 
-                        htmlFor={`photo-upload-${p.id}`}
-                        className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center cursor-pointer text-amber-400 hover:text-white transition-all font-bold text-xs gap-2"
+              {filteredProducts.map(p => {
+                const isFav = favorites.includes(p.id);
+
+                return (
+                  <div key={p.id} className="bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-850 flex flex-col justify-between shadow-xl relative group">
+                    <div className="h-56 bg-zinc-950 relative overflow-hidden">
+                      <img src={formatImageUrl(p.image)} alt={p.name} className="w-full h-full object-cover" />
+                      
+                      {/* Кнопка "В обране" */}
+                      <button
+                        onClick={() => toggleFavorite(p.id)}
+                        className={`absolute top-4 right-4 p-2.5 rounded-full backdrop-blur-md border transition-all z-10 ${
+                          isFav 
+                            ? 'bg-red-950/80 border-red-500/50 text-red-500 scale-110 shadow-lg' 
+                            : 'bg-zinc-950/60 border-zinc-800/80 text-zinc-400 hover:text-red-400 hover:scale-105'
+                        }`}
+                        title={isFav ? "В обраному" : "Додати в обране"}
                       >
-                        <Upload className="w-6 h-6" />
-                        <span>Змінити фото</span>
-                        <input 
-                          id={`photo-upload-${p.id}`}
-                          type="file" 
-                          accept="image/*" 
-                          className="hidden" 
-                          onChange={(e) => handleDirectProductPhotoUpload(p.id, e)}
-                        />
-                      </label>
-                    )}
+                        <Heart className={`w-4 h-4 ${isFav ? 'fill-red-500' : ''}`} />
+                      </button>
 
-                    {!p.available && !isEditorMode && (
-                      <div className="absolute inset-0 bg-black/75 flex items-center justify-center font-bold text-xs uppercase tracking-wider text-red-400">
-                        Немає в наявності
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Опис і ціна */}
-                  <div className="p-6 flex-1 flex flex-col justify-between">
-                    <div>
-                      {isEditorMode ? (
-                        <div className="space-y-2">
-                          <input
-                            value={p.name}
-                            onChange={(e) => handleInlineProductUpdate(p.id, 'name', e.target.value)}
-                            className="w-full bg-zinc-950 text-white font-bold font-serif text-base border border-dashed border-amber-500 rounded p-1.5 focus:outline-none"
-                            placeholder="Назва товару"
-                          />
-                          <textarea
-                            value={p.description || ''}
-                            onChange={(e) => handleInlineProductUpdate(p.id, 'description', e.target.value)}
-                            className="w-full bg-zinc-950 text-zinc-300 text-xs border border-dashed border-amber-500 rounded p-1.5 focus:outline-none resize-none h-16"
-                            placeholder="Опис товару"
-                          />
-                          <label className="flex items-center gap-2 text-xs font-bold text-amber-500 cursor-pointer pt-1">
-                            <input
-                              type="checkbox"
-                              checked={p.available}
-                              onChange={(e) => handleInlineProductUpdate(p.id, 'available', e.target.checked)}
-                              className="rounded"
-                            />
-                            В наявності на вітрині
-                          </label>
-                        </div>
-                      ) : (
-                        <>
-                          <h3 className="text-lg font-bold font-serif text-white">{p.name}</h3>
-                          <p className="text-xs text-zinc-400 mt-2 line-clamp-3 leading-relaxed">{p.description}</p>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between">
-                      {isEditorMode ? (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            value={p.price}
-                            onChange={(e) => handleInlineProductUpdate(p.id, 'price', e.target.value)}
-                            className="w-20 bg-zinc-950 text-amber-400 font-bold font-serif text-lg border border-dashed border-amber-500 rounded p-1 focus:outline-none"
-                          />
-                          <select
-                            value={p.unit}
-                            onChange={(e) => handleInlineProductUpdate(p.id, 'unit', e.target.value)}
-                            className="bg-zinc-950 text-zinc-300 text-xs border border-dashed border-amber-500 rounded p-1"
-                          >
-                            <option value="кг">грн/кг</option>
-                            <option value="шт">грн/шт</option>
-                            <option value="уп">грн/уп</option>
-                          </select>
-                        </div>
-                      ) : (
-                        <div className="text-2xl font-black font-serif text-white">
-                          {p.price} <span className="text-xs font-sans text-zinc-400">грн/{p.unit}</span>
-                        </div>
-                      )}
-
-                      {p.available && !isEditorMode && (
-                        <button
-                          onClick={() => {
-                            const existing = cart.find(item => item.id === p.id);
-                            if (existing) {
-                              setCart(cart.map(i => i.id === p.id ? { ...i, quantity: i.quantity + (p.minWeight || 1) } : i));
-                            } else {
-                              setCart([...cart, { ...p, quantity: p.minWeight || 1 }]);
-                            }
-                            showToast(`"${p.name}" додано до кошика!`);
-                          }}
-                          className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 transition-all active:scale-95"
+                      {/* Кнопка зміни фото в режимі редактора */}
+                      {isEditorMode && (
+                        <label 
+                          htmlFor={`photo-upload-${p.id}`}
+                          className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center cursor-pointer text-amber-400 hover:text-white transition-all font-bold text-xs gap-2"
                         >
-                          <ShoppingBag className="w-4 h-4" /> Додати
-                        </button>
+                          <Upload className="w-6 h-6" />
+                          <span>Змінити фото</span>
+                          <input 
+                            id={`photo-upload-${p.id}`}
+                            type="file" 
+                            accept="image/*" 
+                            className="hidden" 
+                            onChange={(e) => handleDirectProductPhotoUpload(p.id, e)}
+                          />
+                        </label>
+                      )}
+
+                      {!p.available && !isEditorMode && (
+                        <div className="absolute inset-0 bg-black/75 flex items-center justify-center font-bold text-xs uppercase tracking-wider text-red-400">
+                          Немає в наявності
+                        </div>
                       )}
                     </div>
+
+                    <div className="p-6 flex-1 flex flex-col justify-between">
+                      <div>
+                        {isEditorMode ? (
+                          <div className="space-y-2">
+                            <input
+                              value={p.name}
+                              onChange={(e) => handleInlineProductUpdate(p.id, 'name', e.target.value)}
+                              className="w-full bg-zinc-950 text-white font-bold font-serif text-base border border-dashed border-amber-500 rounded p-1.5 focus:outline-none"
+                              placeholder="Назва товару"
+                            />
+                            <textarea
+                              value={p.description || ''}
+                              onChange={(e) => handleInlineProductUpdate(p.id, 'description', e.target.value)}
+                              className="w-full bg-zinc-950 text-zinc-300 text-xs border border-dashed border-amber-500 rounded p-1.5 focus:outline-none resize-none h-16"
+                              placeholder="Опис товару"
+                            />
+                            <label className="flex items-center gap-2 text-xs font-bold text-amber-500 cursor-pointer pt-1">
+                              <input
+                                type="checkbox"
+                                checked={p.available}
+                                onChange={(e) => handleInlineProductUpdate(p.id, 'available', e.target.checked)}
+                                className="rounded"
+                              />
+                              В наявності на вітрині
+                            </label>
+                          </div>
+                        ) : (
+                          <>
+                            <h3 className="text-lg font-bold font-serif text-white">{p.name}</h3>
+                            <p className="text-xs text-zinc-400 mt-2 line-clamp-3 leading-relaxed">{p.description}</p>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="mt-6 pt-4 border-t border-zinc-800 flex items-center justify-between">
+                        {isEditorMode ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              value={p.price}
+                              onChange={(e) => handleInlineProductUpdate(p.id, 'price', e.target.value)}
+                              className="w-20 bg-zinc-950 text-amber-400 font-bold font-serif text-lg border border-dashed border-amber-500 rounded p-1 focus:outline-none"
+                            />
+                            <select
+                              value={p.unit}
+                              onChange={(e) => handleInlineProductUpdate(p.id, 'unit', e.target.value)}
+                              className="bg-zinc-950 text-zinc-300 text-xs border border-dashed border-amber-500 rounded p-1"
+                            >
+                              <option value="кг">грн/кг</option>
+                              <option value="шт">грн/шт</option>
+                              <option value="уп">грн/уп</option>
+                            </select>
+                          </div>
+                        ) : (
+                          <div className="text-2xl font-black font-serif text-white">
+                            {p.price} <span className="text-xs font-sans text-zinc-400">грн/{p.unit}</span>
+                          </div>
+                        )}
+
+                        {p.available && !isEditorMode && (
+                          <button
+                            onClick={() => {
+                              const existing = cart.find(item => item.id === p.id);
+                              if (existing) {
+                                setCart(cart.map(i => i.id === p.id ? { ...i, quantity: parseFloat((i.quantity + (p.minWeight || 1)).toFixed(2)) } : i));
+                              } else {
+                                setCart([...cart, { ...p, quantity: p.minWeight || 1 }]);
+                              }
+                              showToast(`"${p.name}" додано до кошика!`);
+                            }}
+                            className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 transition-all active:scale-95"
+                          >
+                            <ShoppingBag className="w-4 h-4" /> Додати
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
 
-        {/* Кошик */}
+        {/* 2. КОШИК */}
         {activeTab === 'cart' && (
           <div className="max-w-3xl mx-auto">
             <h2 className="text-3xl font-bold font-serif mb-6">Ваш кошик</h2>
             {cart.length === 0 ? (
-              <p className="text-zinc-500">Кошик порожній.</p>
+              <div className="text-center py-16 bg-zinc-900 rounded-3xl border border-zinc-850">
+                <ShoppingBag className="w-16 h-16 text-zinc-600 mx-auto mb-4" />
+                <p className="text-zinc-400 text-base mb-4">Кошик порожній.</p>
+                <button onClick={() => setActiveTab('shop')} className="bg-amber-500 text-zinc-950 font-bold px-6 py-2.5 rounded-xl text-xs">
+                  Перейти до покупок
+                </button>
+              </div>
             ) : (
               <div className="space-y-6">
                 <div className="bg-zinc-900 p-6 rounded-3xl border border-zinc-800 space-y-4">
@@ -901,7 +1004,13 @@ export default function App() {
                     onChange={(e) => setCheckoutForm({ ...checkoutForm, phone: e.target.value })}
                     className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl text-sm"
                   />
-                  <button type="submit" className="w-full bg-amber-500 text-zinc-950 font-bold py-3.5 rounded-xl uppercase tracking-wider text-xs">
+                  <input
+                    placeholder="Адреса доставки (місто, вулиця)"
+                    value={checkoutForm.address}
+                    onChange={(e) => setCheckoutForm({ ...checkoutForm, address: e.target.value })}
+                    className="w-full bg-zinc-950 border border-zinc-800 p-3 rounded-xl text-sm"
+                  />
+                  <button type="submit" className="w-full bg-amber-500 text-zinc-950 font-bold py-3.5 rounded-xl uppercase tracking-wider text-xs shadow-lg active:scale-95 transition-all">
                     Підтвердити замовлення
                   </button>
                 </form>
@@ -910,7 +1019,122 @@ export default function App() {
           </div>
         )}
 
-        {/* Панель керування (Адмінка) */}
+        {/* 3. ОСОБИСТИЙ КАБІНЕТ КЛІЄНТА */}
+        {activeTab === 'profile' && user && (
+          <div className="max-w-4xl mx-auto space-y-8">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-zinc-900 p-6 rounded-3xl border border-zinc-800">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-500">
+                  <User className="w-7 h-7" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold font-serif text-white">{checkoutForm.name || 'Особистий кабінет'}</h2>
+                  <p className="text-xs text-zinc-400 font-mono">{user.email}</p>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setProfileSubTab('orders')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${profileSubTab === 'orders' ? 'bg-amber-500 text-zinc-950' : 'bg-zinc-800 text-zinc-400'}`}
+                >
+                  Мої замовлення ({myOrders.length})
+                </button>
+                <button
+                  onClick={() => setProfileSubTab('favorites')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${profileSubTab === 'favorites' ? 'bg-amber-500 text-zinc-950' : 'bg-zinc-800 text-zinc-400'}`}
+                >
+                  Обране ({favorites.length})
+                </button>
+              </div>
+            </div>
+
+            {/* Вкладка замовлень клієнта */}
+            {profileSubTab === 'orders' && (
+              <div className="space-y-4">
+                {myOrders.length === 0 ? (
+                  <div className="text-center py-16 bg-zinc-900 rounded-3xl border border-zinc-800">
+                    <Package className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
+                    <p className="text-zinc-400 text-sm">У вас ще немає оформлених замовлень.</p>
+                  </div>
+                ) : (
+                  myOrders.map(ord => (
+                    <div key={ord.id} className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl space-y-4">
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-zinc-800 pb-3 font-mono">
+                        <div>
+                          <div className="flex items-center gap-3">
+                            <span className="font-bold text-white text-base">{ord.id}</span>
+                            <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase ${
+                              ord.status === 'completed' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
+                            }`}>
+                              {ord.status === 'completed' ? 'Виконано' : 'Обробляється'}
+                            </span>
+                          </div>
+                          <span className="text-xs text-zinc-500 block mt-1">{ord.date}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-lg font-bold text-amber-500 font-serif">{ord.total.toFixed(2)} грн</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5 text-xs text-zinc-400">
+                        {ord.items?.map((it, idx) => (
+                          <div key={idx} className="flex justify-between">
+                            <span>{it.name} × {it.quantity} {it.unit}</span>
+                            <span className="font-mono">{(it.quantity * it.price).toFixed(2)} грн</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* Вкладка обраного в кабінеті */}
+            {profileSubTab === 'favorites' && (
+              <div>
+                {favorites.length === 0 ? (
+                  <div className="text-center py-16 bg-zinc-900 rounded-3xl border border-zinc-800">
+                    <Heart className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
+                    <p className="text-zinc-400 text-sm">Ви ще не додали жодного товару в обране.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {products.filter(p => favorites.includes(p.id)).map(p => (
+                      <div key={p.id} className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <img src={formatImageUrl(p.image)} alt={p.name} className="w-14 h-14 rounded-xl object-cover" />
+                          <div>
+                            <h4 className="font-bold text-sm text-white font-serif">{p.name}</h4>
+                            <span className="text-xs text-amber-500 font-bold">{p.price} грн/{p.unit}</span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            const existing = cart.find(item => item.id === p.id);
+                            if (existing) {
+                              setCart(cart.map(i => i.id === p.id ? { ...i, quantity: parseFloat((i.quantity + (p.minWeight || 1)).toFixed(2)) } : i));
+                            } else {
+                              setCart([...cart, { ...p, quantity: p.minWeight || 1 }]);
+                            }
+                            showToast(`"${p.name}" додано до кошика!`);
+                          }}
+                          className="p-2.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 rounded-xl font-bold transition-all"
+                          title="Додати в кошик"
+                        >
+                          <ShoppingBag className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 4. АДМІНКА */}
         {activeTab === 'admin' && isAdmin && (
           <div className="space-y-8">
             <div className="flex gap-2 border-b border-zinc-800 pb-4">
