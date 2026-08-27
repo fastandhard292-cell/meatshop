@@ -363,26 +363,45 @@ export default function App() {
     }
   };
 
-  // Категорії
+  // Надійне збереження категорій у базі даних
+  const saveCategoriesToDb = async (updatedCategories) => {
+    if (!isAdmin) return;
+    const { error } = await supabase.from('site_settings').upsert({
+      id: 1,
+      title: siteSettings.title,
+      subtitle: siteSettings.subtitle,
+      banner_badge: siteSettings.bannerBadge,
+      banner_title: siteSettings.bannerTitle,
+      banner_desc: siteSettings.bannerDesc,
+      advantages: siteSettings.advantages,
+      categories: updatedCategories,
+      contact_phone: siteSettings.contactPhone,
+      contact_telegram: siteSettings.contactTelegram,
+      contact_whatsapp: siteSettings.contactWhatsapp,
+      contact_viber: siteSettings.contactViber
+    });
+
+    if (error) {
+      console.error('Помилка збереження категорій:', error);
+      showToast(`Помилка збереження: ${error.message}`, 'error');
+    }
+  };
+
   const handleAddCategory = async (nameToCopy = 'Нова категорія') => {
     const currentList = siteSettings.categories || DEFAULT_CATEGORIES;
     const newCatId = 'cat_' + Date.now();
     const updated = [...currentList, { id: newCatId, name: nameToCopy }];
     setSiteSettings(prev => ({ ...prev, categories: updated }));
     showToast('Категорію додано!', 'success');
-
-    if (isAdmin) {
-      await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, categories: updated });
-    }
+    await saveCategoriesToDb(updated);
   };
 
   const handleUpdateCategory = async (catId, newName) => {
-    const currentList = (siteSettings.categories || DEFAULT_CATEGORIES).map(c => c.id === catId ? { ...c, name: newName } : c);
+    const currentList = (siteSettings.categories || DEFAULT_CATEGORIES).map(c => 
+      c.id === catId ? { ...c, name: newName } : c
+    );
     setSiteSettings(prev => ({ ...prev, categories: currentList }));
-
-    if (isAdmin) {
-      await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, categories: currentList });
-    }
+    await saveCategoriesToDb(currentList);
   };
 
   const handleDeleteCategory = async (catId) => {
@@ -391,10 +410,7 @@ export default function App() {
     setSiteSettings(prev => ({ ...prev, categories: currentList }));
     if (selectedCategory === catId) setSelectedCategory('all');
     showToast('Категорію видалено', 'info');
-
-    if (isAdmin) {
-      await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, categories: currentList });
-    }
+    await saveCategoriesToDb(currentList);
   };
 
   // Товари
@@ -1459,7 +1475,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Плаваюче меню зв'язку (піднято для мобільних) */}
+      {/* Плаваюче меню зв'язку */}
       <div className="fixed bottom-20 md:bottom-6 right-6 z-40">
         {showContactMenu && (
           <div className="mb-3 flex flex-col gap-1.5 bg-zinc-900 border border-zinc-800 p-3 rounded-2xl shadow-2xl text-xs font-bold w-44">
