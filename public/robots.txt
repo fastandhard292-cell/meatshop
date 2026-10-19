@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://www.xn--80ahyfc6d8d.pp.ua/sitemap.xml

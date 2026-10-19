@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
+// Два Gmail адміністраторів з .env (через кому)
 const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || '')
   .split(',')
   .map(e => e.trim().toLowerCase())
@@ -40,11 +41,25 @@ const DEFAULT_CATEGORIES = [
 ];
 
 const formatImageUrl = (url) => {
-  if (!url) return 'https://images.unsplash.com/photo-1602491453979-53a99888ecf1?auto=format&fit=crop&q=80&w=600';
+  if (!url) return 'https://images.unsplash.com/photo-1602491453979-53a99888ecf1?auto=format&fit=crop&q=75&w=600&fm=webp';
   return url.trim();
 };
 
-const compressImage = (file, maxWidth = 900, quality = 0.75) => {
+// Допоміжна функція для видалення старих картинок із Supabase Storage (економія гігабайтів)
+const deleteOldImageFromStorage = async (imageUrl) => {
+  if (!imageUrl || !imageUrl.includes('/storage/v1/object/public/product-images/')) return;
+  try {
+    const filePath = imageUrl.split('/storage/v1/object/public/product-images/')[1];
+    if (filePath) {
+      await supabase.storage.from('product-images').remove([decodeURIComponent(filePath)]);
+    }
+  } catch (e) {
+    console.warn('Не вдалося видалити старе фото:', e);
+  }
+};
+
+// Оптимізоване стиснення у WebP (вага 25-45 КБ замість 200+ КБ у JPEG)
+const compressImage = (file, maxWidth = 720, quality = 0.68) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -68,7 +83,7 @@ const compressImage = (file, maxWidth = 900, quality = 0.75) => {
             if (blob) resolve(blob);
             else reject(new Error('Compression error'));
           },
-          'image/jpeg',
+          'image/webp',
           quality
         );
       };
@@ -163,14 +178,31 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Завантаження усіх замовлень ТІЛЬКИ якщо користувач є перевіреним адміном
+  const fetchAdminOrders = async (adminStatus) => {
+    if (!adminStatus) {
+      setOrders([]);
+      return;
+    }
+    const { data: ordData } = await supabase
+      .from('orders')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (ordData) setOrders(ordData);
+  };
+
   const handleAuthChange = async (currentUser) => {
     setUser(currentUser);
     if (currentUser?.email) {
       const email = currentUser.email.toLowerCase();
       const hasAdminRights = ADMIN_EMAILS.includes(email);
       setIsAdmin(hasAdminRights);
-      if (currentUser && !hasAdminRights) {
+
+      if (!hasAdminRights) {
         setIsEditorMode(false);
+        setOrders([]);
+      } else {
+        fetchAdminOrders(true);
       }
 
       try {
@@ -217,7 +249,11 @@ export default function App() {
           updated_at: new Date().toISOString()
         });
 
-        const { data: userOrders } = await supabase.from('orders').select('*').or(`user_id.eq.${currentUser.id},customer_email.eq.${currentUser.email}`).order('created_at', { ascending: false });
+        const { data: userOrders } = await supabase
+          .from('orders')
+          .select('*')
+          .or(`user_id.eq.${currentUser.id},customer_email.eq.${currentUser.email}`)
+          .order('created_at', { ascending: false });
         if (userOrders) setMyOrders(userOrders);
 
       } catch (err) {
@@ -227,6 +263,7 @@ export default function App() {
       setIsAdmin(false);
       setIsEditorMode(false);
       setMyOrders([]);
+      setOrders([]);
     }
   };
 
@@ -265,6 +302,7 @@ export default function App() {
     showToast('Ви вийшли з облікового запису', 'info');
   };
 
+  // Завантаження публічної вітрини (без витоку замовлень клієнтів)
   const fetchData = async () => {
     try {
       const { data: prodData } = await supabase.from('products').select('*').order('created_at', { ascending: false });
@@ -311,8 +349,9 @@ export default function App() {
         }));
       }
 
-      const { data: ordData } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
-      if (ordData) setOrders(ordData);
+      if (isAdmin) {
+        await fetchAdminOrders(true);
+      }
     } catch (e) {
       console.error('Помилка завантаження даних:', e);
     }
@@ -320,50 +359,100 @@ export default function App() {
 
   useEffect(() => {
     fetchData();
+    // Перевірка, чи клієнт перейшов з Google за прямим посиланням на конкретний товар (?product=ID)
+    const params = new URLSearchParams(window.location.search);
+    const prodQuery = params.get('q');
+    if (prodQuery) setSearchQuery(prodQuery);
   }, []);
 
+  // Динамічне SEO та мікророзмітка товарів (Schema.org Product) для Google Пошуку та Google Покупок
+  useEffect(() => {
+    if (siteSettings.title) {
+      document.title = `${siteSettings.title} — ${siteSettings.subtitle || 'Натуральні крафтові м\'ясні вироби'}`;
+    }
+
+    if (!products || products.length === 0) return;
+
+    const originUrl = window.location.origin;
+    const structuredData = {
+      "@context": "https://schema.org",
+      "@type": "ItemList",
+      "name": `${siteSettings.title} — Каталог продукції`,
+      "itemListElement": products.map((p, index) => ({
+        "@type": "ListItem",
+        "position": index + 1,
+        "item": {
+          "@type": "Product",
+          "productID": String(p.id),
+          "sku": String(p.id),
+          "name": p.name,
+          "description": p.description || `${p.name} — натуральний крафтовий м'ясний виріб від ${siteSettings.title}. Замовляйте онлайн з доставкою.`,
+          "image": [formatImageUrl(p.image)],
+          "brand": {
+            "@type": "Brand",
+            "name": siteSettings.title || "М'ЯСНИЙ КРАФТ"
+          },
+          "offers": {
+            "@type": "Offer",
+            "url": `${originUrl}/?q=${encodeURIComponent(p.name)}`,
+            "priceCurrency": "UAH",
+            "price": Number(p.price).toFixed(2),
+            "priceValidUntil": "2027-12-31",
+            "availability": p.available ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+            "itemCondition": "https://schema.org/NewCondition"
+          }
+        }
+      }))
+    };
+
+    let scriptTag = document.getElementById('google-products-schema');
+    if (!scriptTag) {
+      scriptTag = document.createElement('script');
+      scriptTag.id = 'google-products-schema';
+      scriptTag.type = 'application/ld+json';
+      document.head.appendChild(scriptTag);
+    }
+    scriptTag.textContent = JSON.stringify(structuredData);
+  }, [products, siteSettings.title, siteSettings.subtitle]);
+
   const handleTextChange = async (key, newValue) => {
+    if (!isAdmin) return;
     const updated = { ...siteSettings, [key]: newValue };
     setSiteSettings(updated);
 
-    if (isAdmin) {
-      await supabase.from('site_settings').upsert({
-        id: 1,
-        ...updated
-      });
-    }
+    await supabase.from('site_settings').upsert({
+      id: 1,
+      ...updated
+    });
   };
 
   // Переваги
   const handleAddAdvantage = async (textToCopy = 'НОВА ПЕРЕВАГА') => {
+    if (!isAdmin) return;
     const currentList = siteSettings.advantages || [];
     const updated = [...currentList, textToCopy];
     setSiteSettings(prev => ({ ...prev, advantages: updated }));
     showToast('Перевагу додано!', 'success');
 
-    if (isAdmin) {
-      await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, advantages: updated });
-    }
+    await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, advantages: updated });
   };
 
   const handleUpdateAdvantage = async (index, newText) => {
+    if (!isAdmin) return;
     const currentList = [...(siteSettings.advantages || [])];
     currentList[index] = newText;
     setSiteSettings(prev => ({ ...prev, advantages: currentList }));
 
-    if (isAdmin) {
-      await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, advantages: currentList });
-    }
+    await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, advantages: currentList });
   };
 
   const handleDeleteAdvantage = async (index) => {
+    if (!isAdmin) return;
     const currentList = (siteSettings.advantages || []).filter((_, i) => i !== index);
     setSiteSettings(prev => ({ ...prev, advantages: currentList }));
     showToast('Перевагу видалено', 'info');
 
-    if (isAdmin) {
-      await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, advantages: currentList });
-    }
+    await supabase.from('site_settings').upsert({ id: 1, ...siteSettings, advantages: currentList });
   };
 
   // Надійне збереження категорій у базі даних
@@ -391,6 +480,7 @@ export default function App() {
   };
 
   const handleAddCategory = async (nameToCopy = 'Нова категорія') => {
+    if (!isAdmin) return;
     const currentList = siteSettings.categories || DEFAULT_CATEGORIES;
     const newCatId = 'cat_' + Date.now();
     const updated = [...currentList, { id: newCatId, name: nameToCopy }];
@@ -400,6 +490,7 @@ export default function App() {
   };
 
   const handleUpdateCategory = async (catId, newName) => {
+    if (!isAdmin) return;
     const currentList = (siteSettings.categories || DEFAULT_CATEGORIES).map(c => 
       c.id === catId ? { ...c, name: newName } : c
     );
@@ -408,7 +499,7 @@ export default function App() {
   };
 
   const handleDeleteCategory = async (catId) => {
-    if (catId === 'all') return;
+    if (!isAdmin || catId === 'all') return;
     const currentList = (siteSettings.categories || DEFAULT_CATEGORIES).filter(c => c.id !== catId);
     setSiteSettings(prev => ({ ...prev, categories: currentList }));
     if (selectedCategory === catId) setSelectedCategory('all');
@@ -418,6 +509,7 @@ export default function App() {
 
   // Товари
   const handleInlineProductUpdate = async (productId, field, value) => {
+    if (!isAdmin) return;
     const updatedProducts = products.map(p => p.id === productId ? { ...p, [field]: value } : p);
     setProducts(updatedProducts);
 
@@ -436,48 +528,56 @@ export default function App() {
   };
 
   const handleDirectProductPhotoUpload = async (productId, e) => {
+    if (!isAdmin) return;
     const file = e.target.files?.[0];
     if (!file) return;
 
     try {
-      showToast('Завантаження фото...', 'info');
-      const compressedBlob = await compressImage(file, 900, 0.75);
-      const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
+      showToast('Оптимізація та завантаження WebP...', 'info');
+      const oldProduct = products.find(p => p.id === productId);
+      const compressedBlob = await compressImage(file, 720, 0.68);
+      const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.webp`;
       const filePath = `products/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('product-images')
-        .upload(filePath, compressedBlob, { contentType: 'image/jpeg', cacheControl: '31536000' });
+        .upload(filePath, compressedBlob, { contentType: 'image/webp', cacheControl: '31536000' });
 
       if (uploadError) throw uploadError;
 
+      // Видаляємо старе фото з бакета, щоб не забивати місце
+      if (oldProduct?.image) {
+        await deleteOldImageFromStorage(oldProduct.image);
+      }
+
       const { data: { publicUrl } } = supabase.storage.from('product-images').getPublicUrl(filePath);
       await handleInlineProductUpdate(productId, 'image', publicUrl);
-      showToast('Фото оновлено!', 'success');
+      showToast('Фото оптимізовано та оновлено!', 'success');
     } catch (err) {
       showToast(`Помилка: ${err.message}`, 'error');
     }
   };
 
   const handleFileUpload = async (e) => {
+    if (!isAdmin) return;
     const file = e.target.files?.[0];
     if (!file) return;
 
     try {
-      showToast('Завантаження фото...', 'info');
-      const compressedBlob = await compressImage(file, 900, 0.75);
-      const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
+      showToast('Оптимізація та завантаження WebP...', 'info');
+      const compressedBlob = await compressImage(file, 720, 0.68);
+      const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.webp`;
       const filePath = `products/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('product-images')
-        .upload(filePath, compressedBlob, { contentType: 'image/jpeg', cacheControl: '31536000' });
+        .upload(filePath, compressedBlob, { contentType: 'image/webp', cacheControl: '31536000' });
 
       if (uploadError) throw uploadError;
 
       const { data: { publicUrl } } = supabase.storage.from('product-images').getPublicUrl(filePath);
       setProductForm(prev => ({ ...prev, image: publicUrl }));
-      showToast('Фото додано!', 'success');
+      showToast('Фото оптимізовано та додано!', 'success');
     } catch (err) {
       showToast(`Помилка: ${err.message}`, 'error');
     }
@@ -485,6 +585,7 @@ export default function App() {
 
   const handleSaveProduct = async (e) => {
     e.preventDefault();
+    if (!isAdmin) return;
     if (!productForm.name || !productForm.price) {
       showToast('Вкажіть назву та ціну!', 'error');
       return;
@@ -526,12 +627,17 @@ export default function App() {
   };
 
   const handleDeleteProduct = async (productId) => {
+    if (!isAdmin) return;
+    const target = products.find(p => p.id === productId);
     const { error } = await supabase.from('products').delete().eq('id', productId);
     if (error) {
       showToast(`Помилка видалення: ${error.message}`, 'error');
       return;
     }
-    showToast('Товар видалено', 'info');
+    if (target?.image) {
+      await deleteOldImageFromStorage(target.image);
+    }
+    showToast('Товар та його фото видалено', 'info');
     fetchData();
   };
 
@@ -574,17 +680,18 @@ export default function App() {
     setLastPlacedOrder(newOrder);
     setCart([]);
     showToast(`Замовлення ${newOrder.id} успішно прийнято!`);
-    fetchData();
+    if (isAdmin) fetchAdminOrders(true);
   };
 
   const handleUpdateOrderStatus = async (orderId, newStatus) => {
+    if (!isAdmin) return;
     const { error } = await supabase.from('orders').update({ status: newStatus }).eq('id', orderId);
     if (error) {
       showToast(`Помилка: ${error.message}`, 'error');
       return;
     }
     showToast('Статус замовлення оновлено');
-    fetchData();
+    fetchAdminOrders(true);
   };
 
   const generateOrderMessage = (order) => {
@@ -919,15 +1026,27 @@ export default function App() {
               </div>
             </div>
 
-            {/* Сітка товарів */}
+            {/* Сітка товарів з семантичною розміткою для Google */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredProducts.map(p => {
+              {filteredProducts.map((p, index) => {
                 const isFav = favorites.includes(p.id);
 
                 return (
-                  <div key={p.id} className="bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-850 flex flex-col justify-between shadow-xl relative group">
+                  <article 
+                    key={p.id} 
+                    itemScope 
+                    itemType="https://schema.org/Product"
+                    className="bg-zinc-900 rounded-3xl overflow-hidden border border-zinc-850 flex flex-col justify-between shadow-xl relative group"
+                  >
                     <div className="h-56 bg-zinc-950 relative overflow-hidden">
-                      <img src={formatImageUrl(p.image)} alt={p.name} className="w-full h-full object-cover" />
+                      <img 
+                        itemProp="image"
+                        src={formatImageUrl(p.image)} 
+                        alt={`${p.name} — купити в ${siteSettings.title} (${p.price} грн/${p.unit})`} 
+                        loading={index < 3 ? "eager" : "lazy"}
+                        decoding="async"
+                        className="w-full h-full object-cover" 
+                      />
                       
                       <button
                         onClick={() => toggleFavorite(p.id)}
@@ -947,7 +1066,7 @@ export default function App() {
                           className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center cursor-pointer text-amber-400 hover:text-white transition-all font-bold text-xs gap-2"
                         >
                           <Upload className="w-6 h-6" />
-                          <span>Змінити фото</span>
+                          <span>Змінити фото (WebP)</span>
                           <input 
                             id={`photo-upload-${p.id}`}
                             type="file" 
@@ -1004,14 +1123,18 @@ export default function App() {
                           </div>
                         ) : (
                           <>
-                            <h3 className="text-lg font-bold font-serif text-white">{p.name}</h3>
-                            <p className="text-xs text-zinc-400 mt-2 line-clamp-3 leading-relaxed">{p.description}</p>
+                            <h3 itemProp="name" className="text-lg font-bold font-serif text-white">{p.name}</h3>
+                            <p itemProp="description" className="text-xs text-zinc-400 mt-2 line-clamp-3 leading-relaxed">{p.description}</p>
                           </>
                         )}
                       </div>
 
                       {/* Інтерактивний вибір ваги та кнопка додавання */}
-                      <div className="mt-6 pt-4 border-t border-zinc-800">
+                      <div className="mt-6 pt-4 border-t border-zinc-800" itemProp="offers" itemScope itemType="https://schema.org/Offer">
+                        <meta itemProp="priceCurrency" content="UAH" />
+                        <meta itemProp="price" content={p.price} />
+                        <link itemProp="availability" href={p.available ? "https://schema.org/InStock" : "https://schema.org/OutOfStock"} />
+
                         {isEditorMode ? (
                           <div className="flex items-center gap-2">
                             <input
@@ -1184,7 +1307,7 @@ export default function App() {
                         )}
                       </div>
                     </div>
-                  </div>
+                  </article>
                 );
               })}
             </div>
@@ -1344,7 +1467,7 @@ export default function App() {
                     {products.filter(p => favorites.includes(p.id)).map(p => (
                       <div key={p.id} className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                          <img src={formatImageUrl(p.image)} alt={p.name} className="w-14 h-14 rounded-xl object-cover" />
+                          <img src={formatImageUrl(p.image)} alt={p.name} loading="lazy" className="w-14 h-14 rounded-xl object-cover" />
                           <div>
                             <h4 className="font-bold text-sm text-white font-serif">{p.name}</h4>
                             <span className="text-xs text-amber-500 font-bold">{p.price} грн/{p.unit}</span>
@@ -1432,7 +1555,7 @@ export default function App() {
 
                   <div>
                     <label className="text-xs text-zinc-400 block mb-2 flex items-center justify-between">
-                      <span>Зображення</span>
+                      <span>Зображення (авто-стиснення WebP)</span>
                       <label htmlFor="file-upload" className="cursor-pointer text-amber-500 hover:underline flex items-center gap-1 font-bold">
                         <ImageIcon className="w-4 h-4" /> Завантажити фото
                       </label>
@@ -1473,7 +1596,7 @@ export default function App() {
                   {products.map(p => (
                     <div key={p.id} className="flex justify-between items-center p-3 bg-zinc-950 rounded-2xl border border-zinc-855">
                       <div className="flex items-center gap-3">
-                        <img src={formatImageUrl(p.image)} alt={p.name} className="w-12 h-12 rounded-xl object-cover" />
+                        <img src={formatImageUrl(p.image)} alt={p.name} loading="lazy" className="w-12 h-12 rounded-xl object-cover" />
                         <div>
                           <h5 className="font-bold text-sm">{p.name}</h5>
                           <span className="text-xs text-amber-500 font-bold">{p.price} грн/{p.unit}</span>
@@ -1567,6 +1690,16 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* Прихований SEO-підвал для пошукових роботів Google */}
+      <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-16 pt-8 border-t border-zinc-900 text-xs text-zinc-600 flex flex-col sm:flex-row justify-between gap-4">
+        <div>
+          <strong className="text-zinc-500">{siteSettings.title}</strong> — {siteSettings.subtitle}. Натуральні м'ясні делікатеси, домашні ковбаси на дровах, свіже м'ясо та напівфабрикати.
+        </div>
+        <div>
+          Контакти: <a href={`tel:${siteSettings.contactPhone}`} className="hover:text-zinc-400">{siteSettings.contactPhone}</a>
+        </div>
+      </footer>
 
       {/* Модалка підтвердження замовлення */}
       {lastPlacedOrder && (
